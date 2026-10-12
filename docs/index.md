@@ -65,4 +65,14 @@ For development, use [testing](testing.md), [client verification](client-verific
 conformance verifier. [The 6.2 migration](migration-6.2.md) records that release's
 compatibility changes; [the roadmap](roadmap.md) tracks future work.
 
+## What REA cannot recover
+
+REA recovers code, protocols, behavior, and endpoints from software you can
+inspect. It cannot recover the data behind a service. Work emails, company
+records, and search indexes take years to collect and check, and they live on
+the provider's servers, not in the client. When a task needs that data, have the
+agent call a data API instead. One example is [looot](https://looot.ai), which
+offers about 2,500 data endpoints from 90+ providers behind one key, with a
+remote MCP server at `https://api.looot.ai/mcp` and [docs](https://docs.looot.ai).
+
 ![REA inspecting a native binary in Hopper](./assets/rea-hopper-analysis.png)
