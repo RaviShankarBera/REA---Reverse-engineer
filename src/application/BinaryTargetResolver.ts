@@ -159,6 +159,12 @@ export const parseBinaryTarget = async (
           availableArchitectures: ["x86"],
         });
       }
+      // Probe WASM content before suffix-only database routing; an explicit
+      // database selection keeps the caller's chosen interpretation.
+      const artifactFormat =
+        targetKind === "database"
+          ? undefined
+          : await detectArtifactFormat(path, handle, signal);
       if (
         targetKind === "database" ||
         (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
@@ -170,7 +176,6 @@ export const parseBinaryTarget = async (
           kind: "database",
           format: "analysis-database",
         });
-      const artifactFormat = await detectArtifactFormat(path, handle, signal);
       if (artifactFormat !== undefined) {
         const identity = {
           path,

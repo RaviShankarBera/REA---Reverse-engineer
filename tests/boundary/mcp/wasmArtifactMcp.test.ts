@@ -33,63 +33,71 @@ const wasmToolSchemas = async (client: Client) => {
   return { name: advertised.name, ajv, inputSchema, outputSchema };
 };
 
-it("directs rejected native WASM opening to the advertised static tool while preserving missing-WABT diagnostics", async () => {
-  const directory = await createTestTempDirectory("rea-wasm-recovery-");
-  const path = join(
-    await realpath(directory),
-    process.platform === "win32" ? "module space.bin" : 'module "quoted".bin',
-  );
-  await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
-  const createClient = vi.fn(() => {
-    throw new Error("native provider must not start for WASM");
-  });
-  const session = createTestBinarySession(createClient);
-  const harness = await createApplicationMcpHarness({
-    session,
-    serverOptions: { environment: {} },
-  });
-  onTestFinished(harness.close);
-  const { client } = harness;
-  const { name, ajv, inputSchema } = await wasmToolSchemas(client);
-  const input = { path };
-  expect(
-    toolContract("inspect_wasm_artifact").inputSchema.safeParse(input).success,
-  ).toBe(true);
-  const opening = await client.callTool({
-    name: "open_binary",
-    arguments: input,
-  });
-  expect(opening.isError).toBe(true);
-  const failure = parseMcpToolError(opening);
-  expect(failure).toMatchObject({
-    error: {
-      code: "target_unavailable",
-      category: "unsupported_target",
-      details: { constraint: "wasm_requires_static_inspection" },
-    },
-  });
-  expect(failure.error.remediation.action).toContain(JSON.stringify({ path }));
-  expect(ajv.validate(inputSchema, input)).toBe(true);
-  const inspection = await client.callTool({
-    name,
-    arguments: input,
-  });
-  expect(inspection.isError).toBe(true);
-  expect(parseMcpToolError(inspection)).toMatchObject({
-    error: {
-      code: "capability_unavailable",
-      details: {
-        operation: "inspect_wasm_artifact",
-        reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+it.each(["bin", "hop"])(
+  "directs rejected native WASM opening (%s suffix) to the advertised static tool while preserving missing-WABT diagnostics",
+  async (extension) => {
+    const directory = await createTestTempDirectory("rea-wasm-recovery-");
+    const path = join(
+      await realpath(directory),
+      process.platform === "win32"
+        ? `module space.${extension}`
+        : `module "quoted".${extension}`,
+    );
+    await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    const createClient = vi.fn(() => {
+      throw new Error("native provider must not start for WASM");
+    });
+    const session = createTestBinarySession(createClient);
+    const harness = await createApplicationMcpHarness({
+      session,
+      serverOptions: { environment: {} },
+    });
+    onTestFinished(harness.close);
+    const { client } = harness;
+    const { name, ajv, inputSchema } = await wasmToolSchemas(client);
+    const input = { path };
+    expect(
+      toolContract("inspect_wasm_artifact").inputSchema.safeParse(input)
+        .success,
+    ).toBe(true);
+    const opening = await client.callTool({
+      name: "open_binary",
+      arguments: input,
+    });
+    expect(opening.isError).toBe(true);
+    const failure = parseMcpToolError(opening);
+    expect(failure).toMatchObject({
+      error: {
+        code: "target_unavailable",
+        category: "unsupported_target",
+        details: { constraint: "wasm_requires_static_inspection" },
       },
-    },
-  });
-  await client.ping();
-  expect(createClient).not.toHaveBeenCalled();
-  expect(await readFile(path)).toEqual(
-    Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]),
-  );
-});
+    });
+    expect(failure.error.remediation.action).toContain(
+      JSON.stringify({ path }),
+    );
+    expect(ajv.validate(inputSchema, input)).toBe(true);
+    const inspection = await client.callTool({
+      name,
+      arguments: input,
+    });
+    expect(inspection.isError).toBe(true);
+    expect(parseMcpToolError(inspection)).toMatchObject({
+      error: {
+        code: "capability_unavailable",
+        details: {
+          operation: "inspect_wasm_artifact",
+          reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+        },
+      },
+    });
+    await client.ping();
+    expect(createClient).not.toHaveBeenCalled();
+    expect(await readFile(path)).toEqual(
+      Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]),
+    );
+  },
+);
 
 it("advertises exact valid schemas and records inline WASM interface evidence without a binary target", async () => {
   const value = wasmArtifactFixture();
