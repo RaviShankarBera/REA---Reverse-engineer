@@ -322,4 +322,29 @@ describe("readiness failure semantics", () => {
       }),
     );
   });
+
+  it("emits absent stage-level evidence once instead of repeating per check", () => {
+    const value = input();
+    const absentId = "ev_" + "a".repeat(64);
+    const stage = value.stages.find(
+      ({ stage_id: stageId }) => stageId === "static-analysis",
+    );
+    if (stage === undefined) throw new TypeError("Missing static-analysis stage");
+    stage.evidence_ids.push(absentId);
+    const report = createReconstructionReadinessReport(value);
+
+    const missingFindings = report.findings.filter(
+      ({ code, stage_id: stageId }) =>
+        code === "referenced-evidence-missing" && stageId === "static-analysis",
+    );
+    expect(missingFindings).toHaveLength(1);
+    expect(missingFindings[0]).toEqual(
+      expect.objectContaining({
+        code: "referenced-evidence-missing",
+        stage_id: "static-analysis",
+        status: "unknown",
+        detail: `Referenced Evidence is absent from the bundle: ${absentId}.`,
+      }),
+    );
+  });
 });

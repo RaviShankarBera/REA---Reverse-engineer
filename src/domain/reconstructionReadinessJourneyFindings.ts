@@ -178,6 +178,12 @@ const stageFindings = (
           "Stage check IDs must be unique.",
         ),
       );
+    addMissingEvidenceFindings(
+      findings,
+      stageId,
+      stage.evidence_ids,
+      evidenceIds,
+    );
     for (const checkId of READINESS_REQUIRED_CHECKS[stageId]) {
       const check = checks.get(checkId);
       if (check === undefined) {
@@ -213,7 +219,7 @@ const stageFindings = (
       addMissingEvidenceFindings(
         findings,
         stageId,
-        [...stage.evidence_ids, ...check.evidence_ids],
+        check.evidence_ids,
         evidenceIds,
       );
     }
