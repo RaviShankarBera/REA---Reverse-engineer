@@ -26,6 +26,44 @@ describe("raw-binary Ghidra language binding", () => {
 });
 
 describe("raw-binary independent load-image checks", () => {
+  it("retains uninitialized language memory without treating it as file-backed bytes", () => {
+    const f = fixtureRawBinaryLoadImage();
+    const zeroPage = {
+      block: "ZERO_PAGE",
+      start: "0x0",
+      end: "0xff",
+      address_space: "ram",
+      initialized: false,
+      loaded: true,
+      overlay: false,
+      length: 256,
+      source_file_index: null,
+      file_offset: null,
+      sha256: null,
+    };
+    f.observation.mappings.unshift(zeroPage);
+    expect(
+      attestGhidraRawBinaryLoadImage(f.snapshot, f.target, f.observation),
+    ).toMatchObject({
+      ok: true,
+      value: { status: "verified", observations: f.observation },
+    });
+    zeroPage.initialized = true;
+    expect(
+      attestGhidraRawBinaryLoadImage(f.snapshot, f.target, f.observation),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        status: "mismatch",
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "initialized_unbacked_mappings",
+            matched: false,
+          }),
+        ]),
+      },
+    });
+  });
   it("verifies mapped bytes at the caller-supplied entry", () => {
     const f = fixtureRawBinaryLoadImage();
     const result = attestGhidraRawBinaryLoadImage(

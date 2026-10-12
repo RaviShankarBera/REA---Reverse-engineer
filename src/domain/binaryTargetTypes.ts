@@ -1,10 +1,11 @@
-/** Provider-neutral CPU families detected from supported executable headers. */
+/** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
   "x86",
   "x86_64",
   "arm",
   "arm64",
   "mips",
+  "6502",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -67,10 +68,10 @@ type NonExecutableMetadata = {
 
 type ExecutableTarget = BinaryTargetIdentity & {
   readonly kind: "executable";
-  readonly architecture: Exclude<BinaryArchitecture, "mips">;
+  readonly architecture: Exclude<BinaryArchitecture, "mips" | "6502">;
   readonly availableArchitectures: readonly Exclude<
     BinaryArchitecture,
-    "mips"
+    "mips" | "6502"
   >[];
 };
 
@@ -101,8 +102,14 @@ export type BinaryTarget =
       readonly executableRole?: never;
       readonly managed?: never;
     })
-  | (ExecutableTarget & {
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
       readonly format: "raw-binary";
+      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly availableArchitectures: readonly Exclude<
+        BinaryArchitecture,
+        "mips"
+      >[];
       readonly entryPoint: string;
       readonly entryPointSource: string;
       readonly executableRole?: never;

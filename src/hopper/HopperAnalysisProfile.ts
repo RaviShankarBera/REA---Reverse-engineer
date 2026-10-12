@@ -112,6 +112,8 @@ export const hopperLoaderArgsForTarget = (
   if (target.kind === "database") return ok([]);
   if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
+  if (target.format === "raw-binary")
+    return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
   if (architecture === "mips")
     return err(
@@ -144,7 +146,6 @@ export const hopperLoaderArgsForTarget = (
       return ok(["-l", "WinPE", flag]);
     case "dos-mz":
     case "dos-com":
-    case "raw-binary":
       return err(
         new ProviderAdapterError("hopper", "resolve_analysis_profile"),
       );
@@ -152,7 +153,7 @@ export const hopperLoaderArgsForTarget = (
 };
 
 const hopperArchitectureFlag = (
-  architecture: Exclude<BinaryArchitecture, "mips">,
+  architecture: Exclude<BinaryArchitecture, "mips" | "6502">,
 ): string => {
   switch (architecture) {
     case "x86":

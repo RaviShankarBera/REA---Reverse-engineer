@@ -17,28 +17,28 @@ export type ExecutableMetadata =
     }
   | {
       readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
-      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly architecture: Exclude<BinaryArchitecture, "mips" | "6502">;
       readonly availableArchitectures: readonly Exclude<
         BinaryArchitecture,
-        "mips"
+        "mips" | "6502"
       >[];
       readonly universalSlice?: never;
     }
   | {
       readonly format: "mach-o-universal";
-      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly architecture: Exclude<BinaryArchitecture, "mips" | "6502">;
       readonly availableArchitectures: readonly Exclude<
         BinaryArchitecture,
-        "mips"
+        "mips" | "6502"
       >[];
       readonly universalSlice: UniversalMachOSlice;
     }
   | {
       readonly format: "pe";
-      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly architecture: Exclude<BinaryArchitecture, "mips" | "6502">;
       readonly availableArchitectures: readonly Exclude<
         BinaryArchitecture,
-        "mips"
+        "mips" | "6502"
       >[];
       readonly executableRole:
         | "application"
@@ -115,9 +115,9 @@ const parseFatMachO = (
   const entrySize = is64 ? 32 : 20;
   if (count === 0 || count > 128 || bytes.length < 8 + count * entrySize)
     return err("truncated or invalid FAT architecture table");
-  const architectures: Exclude<BinaryArchitecture, "mips">[] = [];
+  const architectures: Exclude<BinaryArchitecture, "mips" | "6502">[] = [];
   const slices = new Map<
-    Exclude<BinaryArchitecture, "mips">,
+    Exclude<BinaryArchitecture, "mips" | "6502">,
     { readonly offset: bigint; readonly size: bigint }
   >();
   for (let index = 0; index < count; index += 1) {
@@ -301,7 +301,7 @@ const peManagedStatus = (
 
 const machArchitecture = (
   cpu: number,
-): Exclude<BinaryArchitecture, "mips"> | undefined => {
+): Exclude<BinaryArchitecture, "mips" | "6502"> | undefined => {
   switch (cpu) {
     case 7:
       return "x86";
@@ -315,7 +315,9 @@ const machArchitecture = (
   return undefined;
 };
 
-const elfArchitecture = (machine: number): BinaryArchitecture | undefined => {
+const elfArchitecture = (
+  machine: number,
+): Exclude<BinaryArchitecture, "6502"> | undefined => {
   switch (machine) {
     case 3:
       return "x86";

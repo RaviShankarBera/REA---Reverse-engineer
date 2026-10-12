@@ -47,7 +47,11 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (signal?.aborted) return err(new AnalysisCancelledError("open_binary"));
-  if (!isMachOFormat(target.format) || target.architecture === "mips")
+  if (
+    !isMachOFormat(target.format) ||
+    target.architecture === "mips" ||
+    target.architecture === "6502"
+  )
     return invalid("Hopper FAT64 image preparation requires a Mach-O target");
   let file: FileHandle;
   try {
