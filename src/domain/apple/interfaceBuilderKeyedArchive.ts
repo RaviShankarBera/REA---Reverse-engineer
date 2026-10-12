@@ -45,6 +45,7 @@ export const parseInterfaceBuilderRecords = (
   readonly objectCount: number;
   readonly omittedObjects: number;
   readonly omittedConnections: number;
+  readonly unresolvedConnections: number;
   readonly omittedHierarchyReferences: number;
 } => {
   const root = record(value);
@@ -125,6 +126,7 @@ export const parseInterfaceBuilderRecords = (
     objectCount: objectEntries.length,
     omittedObjects: Math.max(0, objectEntries.length - 20_000),
     omittedConnections,
+    unresolvedConnections: 0,
     omittedHierarchyReferences: 0,
   };
 };
@@ -310,6 +312,7 @@ const parseKeyedArchive = (
   const connections: InterfaceBuilderConnection[] = [];
   let objectCount = 0;
   let omittedConnections = 0;
+  let unresolvedConnections = 0;
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
@@ -352,14 +355,21 @@ const parseKeyedArchive = (
       // AppKit connectors (NSNibOutletConnector, NSNibControlConnector)
       // archive NSSource as the outlet owner or sending control and
       // NSDestination as the outlet value or action target, so they are read
-      // in that order without the inversion the unprefixed fields use.
+      // in that order without the inversion the unprefixed fields use. UIKit's
+      // runtime connections archive the same roles under UI-prefixed keys.
+      const uiKit = /^UIRuntime\w*Connection$/u.test(className);
       const source = firstObjectReference(
         controlAction ? fields.destination : fields.source,
-        archivedObjectReference(fields.NSSource),
+        archivedObjectReference(uiKit ? fields.UISource : fields.NSSource),
         controlAction ? fields.to : fields.from,
         controlAction ? fields.target : fields.owner,
       );
-      if (source === null) continue;
+      if (source === null) {
+        // A recognized connector that cannot name its owner is an unresolved
+        // connection, not an absent one.
+        unresolvedConnections += 1;
+        continue;
+      }
       const kind = controlAction ? "action" : classifyConnection(className);
       const parsedConnection = connection.parse({
         id: `archive:${objectId}`,
@@ -367,13 +377,15 @@ const parseKeyedArchive = (
         source_id: source,
         destination_id: firstObjectReference(
           controlAction ? fields.source : fields.destination,
-          archivedObjectReference(fields.NSDestination),
+          archivedObjectReference(
+            uiKit ? fields.UIDestination : fields.NSDestination,
+          ),
           controlAction ? fields.from : fields.to,
           controlAction ? fields.owner : fields.target,
         ),
         label: firstString(
           fields.label,
-          fields.NSLabel,
+          uiKit ? fields.UILabel : fields.NSLabel,
           fields.selector,
           fields.identifier,
           fields.action,
@@ -410,6 +422,7 @@ const parseKeyedArchive = (
     objectCount,
     omittedObjects: Math.max(0, objectCount - 20_000),
     omittedConnections,
+    unresolvedConnections,
     omittedHierarchyReferences: hierarchy.omittedReferences,
   };
 };

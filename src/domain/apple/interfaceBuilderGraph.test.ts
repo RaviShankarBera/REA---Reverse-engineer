@@ -510,6 +510,140 @@ describe("AppKit keyed archive connectors", () => {
   });
 });
 
+describe("UIKit keyed archive connectors", () => {
+  // The connector fields a UIKit runtime outlet archives, from the rooted
+  // fixture in issue #2177: UID 1 is the owner, UID 2 the destination, UID 3
+  // the outlet connection and UID 7 the "view" label.
+  const uiKitOutletArchive = (connection: Record<string, unknown>) => ({
+    $archiver: "NSKeyedArchiver",
+    $version: 100000,
+    $objects: [
+      "$null",
+      { $class: { CF$UID: 4 } },
+      { $class: { CF$UID: 5 } },
+      { $class: { CF$UID: 6 }, ...connection },
+      {
+        $classname: "UIViewController",
+        $classes: ["UIViewController", "UIResponder", "NSObject"],
+      },
+      { $classname: "UIView", $classes: ["UIView", "UIResponder", "NSObject"] },
+      {
+        $classname: "UIRuntimeOutletConnection",
+        $classes: [
+          "UIRuntimeOutletConnection",
+          "UIRuntimeConnection",
+          "NSObject",
+        ],
+      },
+      "view",
+      {
+        $class: { CF$UID: 11 },
+        "NS.objects": [{ CF$UID: 1 }, { CF$UID: 2 }, { CF$UID: 3 }],
+      },
+      { $class: { CF$UID: 11 }, "NS.objects": [{ CF$UID: 3 }] },
+      {
+        $class: { CF$UID: 11 },
+        "NS.objects": [{ CF$UID: 1 }, { CF$UID: 2 }],
+      },
+      { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
+    ],
+    $top: {
+      root: { CF$UID: 8 },
+      UINibConnectionsKey: { CF$UID: 9 },
+      UINibObjectsKey: { CF$UID: 10 },
+      UINibTopLevelObjectsKey: { CF$UID: 10 },
+    },
+  });
+
+  const project = (raw: unknown) =>
+    buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Main.nib",
+          archiveSha256: hash,
+          documentKind: "nib",
+          raw,
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+
+  it("reads a UIKit runtime outlet from UI-prefixed keys", () => {
+    const raw = uiKitOutletArchive({
+      UISource: { CF$UID: 1 },
+      UIDestination: { CF$UID: 2 },
+      UILabel: { CF$UID: 7 },
+    });
+    const parsed = parseInterfaceBuilderRecords(raw);
+    expect(parsed.connections).toEqual([
+      expect.objectContaining({
+        id: "archive:3",
+        kind: "outlet",
+        source_id: "1",
+        destination_id: "2",
+        label: "view",
+      }),
+    ]);
+    expect(parsed.unresolvedConnections).toBe(0);
+
+    const analysis = project(raw);
+    const nodeId = (objectId: string) =>
+      analysis.graph.nodes.find(
+        ({ attributes }) => attributes.interface_builder_object_id === objectId,
+      )?.id;
+    const outlet = analysis.graph.nodes.find(({ kind }) => kind === "outlet");
+    expect(outlet?.name).toBe("view");
+    expect(
+      analysis.graph.edges
+        .filter(
+          ({ relation, from }) =>
+            relation === "outlet_to" && from === outlet?.id,
+        )
+        .map(({ to, resolution }) => ({ to, resolution })),
+    ).toEqual([{ to: nodeId("2"), resolution: "observed" }]);
+    expect(
+      analysis.graph.edges.some(
+        ({ relation, from, to }) =>
+          relation === "contains" && from === nodeId("1") && to === outlet?.id,
+      ),
+    ).toBe(true);
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Main.nib",
+        status: "complete",
+        examined: 1,
+        omitted: 0,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(false);
+  });
+
+  it("reports a recognized connector with no resolvable owner as unresolved", () => {
+    const raw = uiKitOutletArchive({
+      UIDestination: { CF$UID: 2 },
+      UILabel: { CF$UID: 7 },
+    });
+    expect(parseInterfaceBuilderRecords(raw).unresolvedConnections).toBe(1);
+
+    const analysis = project(raw);
+    expect(analysis.graph.nodes.some(({ kind }) => kind === "outlet")).toBe(
+      false,
+    );
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Main.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        examined: 0,
+        omitted: 1,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(true);
+  });
+});
+
 it("names the archive once per evidence record", () => {
   const relativePath = "Views/Main.storyboardc/scene.nib/objects.nib";
   const result = buildInterfaceBuilderAnalysis({
