@@ -7,7 +7,10 @@ import { promisify } from "node:util";
 import { TraceMap, eachMapping } from "@jridgewell/trace-mapping";
 import { CdpBrowserProvider } from "../../dist/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import { waitForBrowserDevtoolsPort } from "../../dist/browser/BrowserProcessStartup.js";
+import {
+  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+  waitForBrowserDevtoolsPort,
+} from "../../dist/browser/BrowserProcessStartup.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { traceSourceMap } from "../../dist/javascript/sourceMaps/TraceSourceMap.js";
 import { startBrowserSourceMapSite } from "../fixtures/browser-source-map-site.mjs";
@@ -98,7 +101,7 @@ async function verifyCase(executable, entrypoint, scenario) {
       executable,
       activePortPath: join(fixture.profile, "DevToolsActivePort"),
       stderr: () => stderr,
-      timeoutMs: 20_000,
+      timeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
     });
     const endpoint = `http://127.0.0.1:${port}`;
     const provider = new CdpBrowserProvider();
