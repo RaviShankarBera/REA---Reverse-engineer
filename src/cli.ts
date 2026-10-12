@@ -33,6 +33,7 @@ import { registerWebSourceLocationCommands } from "./cli/webSourceLocationComman
 import { registerWebRuntimeCommands } from "./cli/webRuntimeCommands.js";
 import { registerWebNetworkCaptureCommands } from "./cli/webNetworkCaptureCommands.js";
 import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryCommands.js";
+import { registerJavaScriptDeobfuscationCommands } from "./cli/javascriptDeobfuscationCommands.js";
 import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
 import { registerElectronCommands } from "./cli/electronCommands.js";
@@ -115,6 +116,7 @@ export const createCli = (
   registerWebRuntimeCommands(cli, logger);
   registerWebNetworkCaptureCommands(cli, logger, environment);
   registerJavaScriptRecoveryCommands(cli, logger, environment);
+  registerJavaScriptDeobfuscationCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger, environment);
   registerElectronCommands(cli, logger, environment);
