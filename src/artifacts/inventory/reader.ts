@@ -7,7 +7,7 @@ import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   isZipPackageFormat,
-  ZIP_NON_ENTRY_TAIL_LIMITATION,
+  ZIP_NON_ENTRY_LIMITATION,
 } from "../../domain/zipPackageFormat.js";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
@@ -41,9 +41,7 @@ export const inventoryLimitations = (
   reader: ArtifactReader | undefined,
 ): string[] => {
   if (reader !== undefined)
-    return isZipPackageFormat(reader.format)
-      ? [ZIP_NON_ENTRY_TAIL_LIMITATION]
-      : [];
+    return isZipPackageFormat(reader.format) ? [ZIP_NON_ENTRY_LIMITATION] : [];
   // dmg and pkg reach here only after classifyRootFormat matched their bytes.
   if (format === "dmg" || format === "pkg")
     return [

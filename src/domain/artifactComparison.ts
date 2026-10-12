@@ -13,7 +13,7 @@ import {
 } from "./artifactInventoryEvidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
-import { ZIP_NON_ENTRY_TAIL_LIMITATION } from "./zipPackageFormat.js";
+import { isZipInventoryScopeLimitation } from "./zipPackageFormat.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const comparisonStatusSchema = z.enum([
@@ -436,7 +436,7 @@ const summarize = (
 const hasCoverageLimitation = (limitations: readonly string[]): boolean =>
   limitations.some(
     (limitation) =>
-      limitation !== ZIP_NON_ENTRY_TAIL_LIMITATION &&
+      !isZipInventoryScopeLimitation(limitation) &&
       !/integrity contradiction\(s\) were recorded/u.test(limitation),
   );
 
