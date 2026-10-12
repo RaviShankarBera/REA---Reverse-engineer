@@ -468,6 +468,7 @@ const normalizeTool = (
     annotations: {
       read_only: booleanOrNull(annotations?.readOnly),
       untrusted_content: booleanOrNull(annotations?.untrustedContent),
+      consequential: booleanOrNull(annotations?.consequential),
       autosubmit: booleanOrNull(annotations?.autosubmit),
     },
     registration_source: registrationSource(

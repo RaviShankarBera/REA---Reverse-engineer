@@ -16,6 +16,13 @@ export const emitEvents = (
   emitCaptureNavigation(socket, command, port, options);
 };
 
+const webMcpToolAnnotations = {
+  readOnly: true,
+  untrustedContent: true,
+  consequential: true,
+  autosubmit: false,
+};
+
 const emitWebMcpEvents = (
   socket: WebSocket,
   command: FakeCdpCommand,
@@ -54,11 +61,7 @@ const emitWebMcpEvents = (
             properties: inputSchemaProperties,
             required: ["orderId"],
           },
-          annotations: {
-            readOnly: true,
-            untrustedContent: true,
-            autosubmit: false,
-          },
+          annotations: webMcpToolAnnotations,
           stackTrace: {
             callFrames: [
               {

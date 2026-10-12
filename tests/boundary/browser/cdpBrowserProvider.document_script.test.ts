@@ -282,6 +282,7 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
             annotations: {
               read_only: true,
               untrusted_content: true,
+              consequential: true,
               autosubmit: false,
             },
             trust: "page-declared-untrusted",
@@ -756,6 +757,15 @@ describe("CdpBrowserProvider: WebMCP registration owners", () => {
       const tools = result.value.tools.items;
       expect(tools).toHaveLength(mode === "retain" ? 2 : 1);
       expect(result.value.tools.total).toBe(tools.length);
+      // Declarations without annotations report absent hints as null, never
+      // collapsed to a declared false.
+      for (const tool of tools)
+        expect(tool.annotations).toEqual({
+          read_only: null,
+          untrusted_content: null,
+          consequential: null,
+          autosubmit: null,
+        });
       expect(tools).toContainEqual(
         expect.objectContaining({
           name: "read_item",
