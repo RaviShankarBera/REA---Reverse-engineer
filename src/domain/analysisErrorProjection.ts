@@ -445,8 +445,8 @@ const lifecycleErrorDetails = (
   if (error instanceof AnalysisCancelledError)
     return {
       operation: error.operation,
-      cleanup: error.cleanup === undefined ? "complete" : "incomplete",
-      ...(error.cleanup === undefined
+      cleanup: error.cleanupIncomplete ? "incomplete" : "complete",
+      ...(error.cleanup === undefined || !error.cleanupIncomplete
         ? {}
         : {
             cleanup_reason: error.cleanup.reason,
@@ -460,7 +460,7 @@ const lifecycleErrorDetails = (
     return {
       operation: error.operation,
       timeout_ms: error.timeoutMs,
-      ...(error.cleanup === undefined
+      ...(error.cleanup === undefined || !error.cleanupIncomplete
         ? {}
         : {
             cleanup: "incomplete",

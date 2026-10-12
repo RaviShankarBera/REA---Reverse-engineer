@@ -1,11 +1,4 @@
-import {
-  cp,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -66,9 +59,10 @@ async function fixture() {
   const initial = seed;
   if (initial === undefined)
     throw new Error("CI scope seed was not initialized");
-  const directory = await createTestTempDirectory("rea-ci-scope-");
-  // Copy the pristine object database, refs and index; each case owns its mutations.
-  await cp(initial.directory, directory, { recursive: true });
+  const workspace = await createTestTempDirectory("rea-ci-scope-");
+  const directory = join(workspace, "repository");
+  // Clone through Git so transient files in the seed's object database are not copied.
+  await git(workspace, ["clone", "--no-local", initial.directory, directory]);
   return { directory, base: initial.base };
 }
 

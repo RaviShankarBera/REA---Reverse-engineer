@@ -45,6 +45,7 @@ import {
   streamCliCommandResults,
   type CliResultOutput,
 } from "./cli/streamedJsonOutput.js";
+import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 
 /** Describe CLI settings that are invalid before any command runs, as MCP does. */
 export const cliConfigurationError = (
@@ -91,6 +92,7 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger, environment);
+  registerReverseEngineeringCommands(cli, logger, environment);
   registerCoreAnalysisCommands(cli, logger, analysis.runDirectAnalysis);
   registerUtilityCommands(cli, logger, environment, analysis);
   registerWasmCommands(cli, logger, environment);
