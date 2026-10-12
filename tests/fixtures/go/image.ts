@@ -59,6 +59,7 @@ export const createGoBinaryFixture = (
     goVersion?: string;
     moduleText?: string;
     omitBuildInfo?: boolean;
+    unmappedDebugSegment?: boolean;
   } = {},
 ): {
   bytes: Buffer;
@@ -66,6 +67,7 @@ export const createGoBinaryFixture = (
   versionOffset: number;
   moduleOffset: number;
   moduleBytes: Buffer;
+  unmappedSegmentOffset: number | null;
 } => {
   const format = options.format ?? "elf";
   const bits = options.bits ?? 64;
@@ -83,16 +85,21 @@ export const createGoBinaryFixture = (
     if (bits === 64) view.setBigUint64(offset, BigInt(value), little);
     else u32(offset, value);
   };
-  writeFixtureContainer(format, options.sectionless ?? false, {
-    bytes,
-    bits,
-    little,
-    base,
-    headerOffset,
-    u16,
-    u32,
-    word,
-  });
+  const unmappedSegmentOffset = writeFixtureContainer(
+    format,
+    options.sectionless ?? false,
+    {
+      bytes,
+      bits,
+      little,
+      base,
+      headerOffset,
+      u16,
+      u32,
+      word,
+    },
+    options.unmappedDebugSegment ?? false,
+  );
   const version = Buffer.from(options.goVersion ?? "go1.26.0");
   const moduleBytes = Buffer.concat([
     MODULE_START,
@@ -132,7 +139,14 @@ export const createGoBinaryFixture = (
     bytes[headerOffset + 15] =
       (little ? 0 : 1) | (encoding === "inline" ? 2 : 0);
   }
-  return { bytes, headerOffset, versionOffset, moduleOffset, moduleBytes };
+  return {
+    bytes,
+    headerOffset,
+    versionOffset,
+    moduleOffset,
+    moduleBytes,
+    unmappedSegmentOffset,
+  };
 };
 
 /** Embedded invalid UTF-8 alongside valid records, with exact independent byte expectations. */
@@ -257,7 +271,8 @@ const writeFixtureContainer = (
     u32: (offset: number, value: number) => void;
     word: (offset: number, value: number) => void;
   },
-): void => {
+  unmappedDebugSegment = false,
+): number | null => {
   const { bytes, bits, little, base, headerOffset, u16, u32, word } = context;
   if (format === "elf") {
     bytes.set([0x7f, 0x45, 0x4c, 0x46, bits === 64 ? 2 : 1, little ? 1 : 2, 1]);
@@ -303,6 +318,7 @@ const writeFixtureContainer = (
       word(info + (wide ? 24 : 16), headerOffset);
       word(info + (wide ? 32 : 20), 2048);
     }
+    return null;
   } else if (format === "pe") {
     if (!little) throw new Error("PE fixtures are little endian");
     bytes.write("MZ", 0, "ascii");
@@ -321,17 +337,18 @@ const writeFixtureContainer = (
     u32(section + 16, 2048);
     u32(section + 20, headerOffset);
     u32(section + 36, 0xc0000040);
+    return null;
   } else {
     const wide = bits === 64;
     u32(0, wide ? 0xfeedfacf : 0xfeedface);
     u32(4, wide ? 0x01000007 : 7);
     u32(8, 3);
     u32(12, 2);
-    u32(16, 1);
+    u32(16, unmappedDebugSegment ? 2 : 1);
     const segmentSize = wide ? 72 : 56;
     const sectionSize = wide ? 80 : 68;
     const commandSize = segmentSize + (sectionless ? 0 : sectionSize);
-    u32(20, commandSize);
+    u32(20, commandSize + (unmappedDebugSegment ? segmentSize : 0));
     const command = wide ? 32 : 28;
     u32(command, wide ? 0x19 : 1);
     u32(command + 4, commandSize);
@@ -351,5 +368,22 @@ const writeFixtureContainer = (
       word(section + (wide ? 40 : 36), 2048);
       u32(section + (wide ? 48 : 40), headerOffset);
     }
+    if (!unmappedDebugSegment) return null;
+    // Compiler debug segments declare no address space and no initial
+    // protection, share the following mapped segment's virtual address, and
+    // still carry file bytes. Their file range may exceed the empty virtual
+    // size and may overlap the mapped segment's own bytes.
+    const debug = command + commandSize;
+    u32(debug, wide ? 0x19 : 1);
+    u32(debug + 4, segmentSize);
+    bytes.write("__DWARF", debug + 8, "ascii");
+    word(debug + 24, base);
+    word(debug + (wide ? 32 : 28), 0);
+    word(debug + (wide ? 40 : 32), 2048);
+    word(debug + (wide ? 48 : 36), 2048);
+    u32(debug + (wide ? 56 : 40), 0);
+    u32(debug + (wide ? 60 : 44), 0);
+    u32(debug + (wide ? 64 : 48), 0);
+    return debug;
   }
 };

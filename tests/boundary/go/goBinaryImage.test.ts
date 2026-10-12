@@ -436,6 +436,52 @@ it("does not treat Mach-O __PAGEZERO as a module string header", () => {
   expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(/mapped|range/i);
 });
 
+it.each([
+  [32, "little"],
+  [32, "big"],
+  [64, "little"],
+  [64, "big"],
+] as const)(
+  "reads %d-bit %s Mach-O metadata beside an unmapped debug segment",
+  (bits, byteOrder) => {
+    const fixture = createGoBinaryFixture({
+      format: "macho",
+      bits,
+      byteOrder,
+      unmappedDebugSegment: true,
+    });
+    // The debug segment shares the mapped segment's virtual address, so
+    // admitting its file bytes as a mapping would be an ambiguous alias.
+    expect(fixture.unmappedSegmentOffset).not.toBeNull();
+    expect(readGoBinaryImage(fixture.bytes)).toMatchObject({
+      format: "macho",
+      bits,
+      byte_order: byteOrder,
+      build_info: {
+        header_offset: fixture.headerOffset,
+        encoding: "inline",
+        go_version: "go1.26.0",
+        module_text: GO_MODULE_TEXT,
+      },
+    });
+  },
+);
+
+it("still rejects a mapped Mach-O segment whose file bytes exceed its virtual size", () => {
+  const fixture = createGoBinaryFixture({
+    format: "macho",
+    unmappedDebugSegment: true,
+  });
+  const debug = fixture.unmappedSegmentOffset;
+  if (debug === null) throw new Error("fixture must declare a debug segment");
+  // Declaring initial protection makes the oversized segment mapped, so its
+  // file bytes are no longer admissible beyond the empty virtual size.
+  fixture.bytes.writeUInt32LE(3, debug + 60);
+  expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(
+    /addresses or sizes/i,
+  );
+});
+
 it.each(["elf", "pe", "macho"] as const)(
   "refuses file aliases overlapping only part of a zero-filled %s module header",
   (format) => {

@@ -63,7 +63,14 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
       const maxProtection = reader.u32(offset + (wide ? 56 : 40));
       const protection = reader.u32(offset + (wide ? 60 : 44));
       const sectionCount = reader.u32(offset + (wide ? 64 : 48));
-      if (fileSize > memorySize || address + memorySize > 1n << BigInt(bits))
+      // A segment with no virtual memory and no initial protection occupies no
+      // address space. Apple's loader admits file bytes beyond that empty
+      // virtual size, which is how compilers emit their __DWARF segment.
+      const unmapped = memorySize === 0n && protection === 0;
+      if (
+        (fileSize > memorySize && !unmapped) ||
+        address + memorySize > 1n << BigInt(bits)
+      )
         throw new GoBinaryFormatFailure(
           "malformed",
           "Mach-O segment addresses or sizes are invalid",
@@ -82,7 +89,8 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
       const name = fixedName(
         reader.range(offset + 8, 16, "Mach-O segment name"),
       );
-      if (mapping.size !== 0 && name !== "__PAGEZERO") mappings.push(mapping);
+      if (mapping.size !== 0 && name !== "__PAGEZERO" && !unmapped)
+        mappings.push(mapping);
       if (memorySize > fileSize && name !== "__PAGEZERO")
         zeroFills.push({
           address: address + fileSize,
