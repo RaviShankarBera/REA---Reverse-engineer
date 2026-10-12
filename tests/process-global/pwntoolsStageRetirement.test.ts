@@ -232,12 +232,15 @@ it.runIf(supportedHost).each([
     const { path, root, environment, basic } = await fixture();
     let launches = 0;
     let cleanupAllowed = false;
+    let retainedLaunch:
+      | Awaited<ReturnType<NonNullable<PwntoolsLauncher>>>
+      | undefined;
     const read = vi.spyOn(artifacts, "readStableArtifact");
     const provider = new PwntoolsRecordedCrashProvider(
       environment,
       async (spawn) => {
         if (stage === "debugger" && ++launches === 1) return basic(spawn);
-        return changingWorker(
+        retainedLaunch = await changingWorker(
           spawn,
           join(spawn.cwd ?? "", "resource.failure"),
           {
@@ -247,6 +250,7 @@ it.runIf(supportedHost).each([
           },
           () => cleanupAllowed,
         );
+        return retainedLaunch;
       },
       async () => root,
     );
@@ -261,6 +265,15 @@ it.runIf(supportedHost).each([
     if (result.ok) throw new Error("Expected unresolved process ownership");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("cleanup_incomplete");
+    expect(retainedLaunch?.ownership).toBeDefined();
+    expect(projected).toMatchObject({
+      details: {
+        resources: expect.arrayContaining([
+          `pid:${retainedLaunch?.ownership?.leaderPid}`,
+          `process-group:${retainedLaunch?.ownership?.processGroupId}`,
+        ]),
+      },
+    });
     if (stage === "debugger")
       expect(projected).toMatchObject({
         details: {

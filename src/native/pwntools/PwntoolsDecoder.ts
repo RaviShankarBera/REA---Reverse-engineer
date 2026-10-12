@@ -518,6 +518,12 @@ export class PwntoolsDecoder<
         [
           pending.process.launch.ownership?.runId ?? "owned-decoder",
           ...(pending.root === undefined ? [] : [pending.root.path]),
+          ...(pending.process.launch.ownership === undefined
+            ? []
+            : [
+                `pid:${pending.process.launch.ownership.leaderPid}`,
+                `process-group:${pending.process.launch.ownership.processGroupId}`,
+              ]),
         ],
         {
           reason: stopped.reason,
