@@ -115,19 +115,68 @@ it("rejects missing, stale, and extra packaged references and removes deleted so
   await f.generate("--check");
 });
 
-it("pins authored `@latest` commands to the packaged version", async () => {
+it("keeps an authored command pinned to the packaged version", async () => {
   const f = await fixture();
   await writeFile(
     join(f.sourceRoot, "SKILL.md"),
     authored.replace(
       "Inspect the caller-selected artifact.",
-      "Run `npx -y rea-agents@latest doctor --json` first.",
+      "Run `npx -y rea-agents@6.2.0 doctor --json` first.",
     ),
   );
   await f.generate();
   const generated = await readFile(join(f.outputRoot, "SKILL.md"), "utf8");
   expect(generated).toContain("npx -y rea-agents@6.2.0 doctor --json");
-  expect(generated).not.toContain("rea-agents@latest");
+  expect(generated).not.toContain("@latest");
+  await f.generate("--check");
+});
+
+it.each([
+  ["SKILL.md", "npx -y rea-agents@latest doctor", "rea-agents@latest"],
+  ["SKILL.md", "npx -y rea-agents@6.1.0 doctor", "rea-agents@6.1.0"],
+  [
+    "references/guide.md",
+    "npx -y rea-agents@latest doctor",
+    "rea-agents@latest",
+  ],
+  ["SKILL.md", "npx -y rea-agents doctor", "rea-agents"],
+  ["SKILL.md", "npx --yes rea-agents doctor", "rea-agents"],
+  ["references/guide.md", "npm exec --package=rea-agents -- rea", "rea-agents"],
+  ["SKILL.md", "npm exec -p rea-agents rea doctor", "rea-agents"],
+  ["SKILL.md", "npm exec -- rea-agents doctor", "rea-agents"],
+  ["SKILL.md", "npm exec --package=rea-agents@next -- rea", "rea-agents@next"],
+  ["SKILL.md", "pnpm dlx rea-agents doctor", "rea-agents"],
+  ["SKILL.md", "yarn dlx rea-agents doctor", "rea-agents"],
+  ["SKILL.md", "bunx rea-agents doctor", "rea-agents"],
+  ["SKILL.md", "npm install --global rea-agents", "rea-agents"],
+])(
+  "rejects an unpinned package reference in authored %s (%s)",
+  async (relativePath, command, specifier) => {
+    const f = await fixture();
+    const path = join(f.sourceRoot, relativePath);
+    await writeFile(
+      path,
+      `${await readFile(path, "utf8")}Run \`${command}\`.\n`,
+    );
+    await expect(f.generate()).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        `${relativePath} names ${specifier}; pin the package runner to rea-agents@6.2.0`,
+      ),
+    });
+  },
+);
+
+it.each([
+  "Run `npx -y rea-agents@6.2.0 doctor --json`.",
+  "Run `npm exec --package=rea-agents@6.2.0 -- rea doctor`.",
+  "```bash\nbunx rea-agents@6.2.0 doctor\n```",
+  "Install `npm install --global rea-agents@6.2.0` when allowed.",
+  "The rea-agents package ships the `rea` CLI; use npx with the rea-agents package only when allowed.",
+])("accepts a pinned or prose package mention: %s", async (line) => {
+  const f = await fixture();
+  const path = join(f.sourceRoot, "references/guide.md");
+  await writeFile(path, `${await readFile(path, "utf8")}${line}\n`);
+  await f.generate();
   await f.generate("--check");
 });
 
