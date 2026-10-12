@@ -20,6 +20,25 @@ export interface SegmentSummary {
   readonly readable: boolean | null;
   readonly writable: boolean | null;
   readonly executable: boolean | null;
+  readonly image_base?: string;
+  readonly address_space?: string;
+}
+
+/** Bounded provider observations retained when no single loaded base is consistent. */
+export interface ImageBaseConflictPartialObservation {
+  readonly kind: "image-base-conflict";
+  readonly reported_segment_count: number;
+  readonly reported_image_base_count: number;
+  /** One original segment per retained base; this is not a complete inventory. */
+  readonly representative_segments: readonly {
+    readonly name: string;
+    readonly start: string;
+    readonly end: string;
+    readonly image_base: string;
+    readonly address_space: string | null;
+  }[];
+  readonly omitted_segment_count: number;
+  readonly omitted_image_base_count: number;
 }
 
 /** Return a bounded byte distance between canonical addresses in one space. */
@@ -58,6 +77,8 @@ const segmentSchema = z.object({
   readable: z.boolean().nullable(),
   writable: z.boolean().nullable(),
   executable: z.boolean().nullable(),
+  image_base: z.string().min(1).exactOptional(),
+  address_space: z.string().min(1).exactOptional(),
 });
 const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
@@ -412,7 +433,7 @@ export const parseRelatedAddresses = (
     : invalid(`${relation} list`, parsed.error);
 };
 
-/** Parse direct or wrapped Hopper segment records. */
+/** Preserve reported address context in direct or wrapped provider segments. */
 export const parseSegments = (
   value: JsonValue,
 ): Result<readonly SegmentSummary[], HopperProtocolError> => {

@@ -22,6 +22,8 @@ import {
   parseListCount,
   parseRelatedAddresses,
   parseSegments,
+  type ImageBaseConflictPartialObservation,
+  type SegmentSummary,
 } from "../domain/hopperValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -45,6 +47,9 @@ import { traceCallPath } from "./CallPathTracing.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
+
+const IMAGE_BASE_CONFLICT_SEGMENT_LIMIT = 32;
+
 /**
  * Composes direct provider operations into bounded reverse-engineering tools.
  * Direct callers use `execute`; adapters that own validation use
@@ -532,14 +537,64 @@ export class EnhancedTools {
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
+    // The first segment need not start at the provider's loaded image base.
+    const imageBases = new Map<string, SegmentSummary>();
+    for (const segment of segments.value)
+      if (
+        segment.image_base !== undefined &&
+        !imageBases.has(segment.image_base)
+      )
+        imageBases.set(segment.image_base, segment);
+    if (imageBases.size > 1) {
+      // Sample distinct bases so repeated early segments cannot hide the conflict.
+      const representatives: ImageBaseConflictPartialObservation["representative_segments"][number][] =
+        [];
+      for (const [
+        image_base,
+        { name, start, end, address_space },
+      ] of imageBases) {
+        representatives.push({
+          name,
+          start,
+          end,
+          image_base,
+          address_space: address_space ?? null,
+        });
+        if (representatives.length === IMAGE_BASE_CONFLICT_SEGMENT_LIMIT) break;
+      }
+      return err(
+        new AnalysisOutputError(
+          "binary_overview",
+          "provider reported conflicting loaded image bases",
+          {
+            partialObservation: {
+              kind: "image-base-conflict",
+              reported_segment_count: segments.value.length,
+              reported_image_base_count: imageBases.size,
+              representative_segments: representatives,
+              omitted_segment_count:
+                segments.value.length - representatives.length,
+              omitted_image_base_count:
+                imageBases.size - representatives.length,
+            },
+          },
+        ),
+      );
+    }
+
     return ok({
       document: document.value,
-      segments: segments.value.map(({ name, start, end }) => ({
-        name,
-        start,
-        end,
-        length: addressDistance(start, end),
-      })),
+      image_base: imageBases.keys().next().value ?? null,
+      segments: segments.value.map(
+        ({ name, start, end, image_base, address_space }) => ({
+          name,
+          start,
+          end,
+          length: addressDistance(start, end),
+          ...(image_base === undefined ? {} : { image_base }),
+          ...(address_space === undefined ? {} : { address_space }),
+        }),
+      ),
       segment_count: segments.value.length,
       procedure_count: procedureCount.value,
       string_count: stringCount.value,
