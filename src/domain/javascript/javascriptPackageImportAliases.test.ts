@@ -66,9 +66,20 @@ describe("exact package import lookup", () => {
     });
   });
 
-  it("does not claim a miss when the map only has pattern keys", () => {
+  it("matches a pattern key and captures the enclosed substring", () => {
     expect(
       lookupExactPackageImport({ "#internal/*": "./src/*.js" }, "#internal/a"),
+    ).toEqual({
+      kind: "pattern-found",
+      target: "./src/*.js",
+      capture: "a",
+      declared: ["#internal/*"],
+    });
+  });
+
+  it("does not claim a miss when no pattern key matches", () => {
+    expect(
+      lookupExactPackageImport({ "#internal/*": "./src/*.js" }, "#other/a"),
     ).toEqual({
       kind: "pattern-unresolved",
       declared: ["#internal/*"],

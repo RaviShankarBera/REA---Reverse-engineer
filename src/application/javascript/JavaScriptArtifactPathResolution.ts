@@ -19,6 +19,7 @@ import {
   classifyPackageImportTargetString,
   lookupExactPackageImport,
 } from "../../domain/javascript/javascriptPackageImportAliases.js";
+import { matchPackagePatternKey } from "../../domain/javascript/javascriptPackagePatternKeys.js";
 import { typescriptEmittedSourceCandidates } from "../TypeScriptEmittedSourceCandidates.js";
 
 type ArtifactPathResolutionContext =
@@ -350,9 +351,12 @@ const enclosingPackageMetadata = (
 };
 
 /**
- * Resolve an exact `#alias` against the importer's enclosing `imports` map.
- * Selected relative targets are exact files; patterns, recursive aliases, and
- * external-package targets stay unresolved without falling through.
+ * Resolve an exact or pattern `#alias` against the importer's enclosing
+ * `imports` map. Exact keys win; single-`*` pattern keys capture their
+ * enclosed substring for target substitution with the same revalidation as
+ * exports patterns. Selected targets are package-local `./` files with no
+ * extension or index fallback; recursive aliases and external-package targets
+ * stay unresolved without falling through.
  */
 const resolvePackageImportAlias = (
   input: ResolveArtifactPathInput,
@@ -365,7 +369,7 @@ const resolvePackageImportAlias = (
     ]);
   if (classified.kind === "pattern")
     return unresolvedCandidate("external", [
-      `Wildcard and directory package import aliases remain unresolved; ${JSON.stringify(specifier)} is not an exact imports key.`,
+      `A package import specifier containing "*" is not a valid alias; pattern keys match concrete specifiers, and ${JSON.stringify(specifier)} is a pattern itself.`,
     ]);
   const metadata = enclosingPackageMetadata(input);
   if (metadata.kind === "none")
@@ -385,12 +389,13 @@ const resolvePackageImportAlias = (
     ]);
   if (lookup.kind === "pattern-unresolved")
     return unresolvedCandidate("external", [
-      `Wildcard package import aliases remain unresolved; package metadata ${metadata.path} has no exact imports key ${specifier}.`,
+      `Package metadata ${metadata.path} declares no exact or matching pattern imports key ${specifier}; it declares ${lookup.declared.join(", ") || "no imports keys"}.`,
     ]);
+  const packageUrl = packageMetadataUrl(metadata.path);
   const selected = selectExportTarget(
     lookup.target,
     packageExportConditions(input.moduleKind),
-    packageMetadataUrl(metadata.path),
+    packageUrl,
     "imports",
   );
   if (selected.kind === "invalid" || selected.kind === "invalid-config")
@@ -405,15 +410,31 @@ const resolvePackageImportAlias = (
     return unresolvedCandidate("external", [
       `Package metadata ${metadata.path} blocks import alias ${specifier} with ${selected.cause === "null" ? "an explicit null imports target" : "an empty imports target array"}.`,
     ]);
-  if (selected.kind === "non-relative") {
-    const target = classifyPackageImportTargetString(selected.value);
+  // Pattern matches substitute the captured substring into the selected string
+  // target before classification, so recursive and external-package refusals
+  // name the expanded target a concrete specifier selected.
+  const final =
+    lookup.kind === "pattern-found"
+      ? expandPatternString(
+          selected.value,
+          lookup.capture,
+          packageUrl,
+          "imports",
+        )
+      : selected;
+  if (final.kind === "invalid")
+    return unresolvedCandidate("rejected", [
+      `Package metadata ${metadata.path}: ${final.limitation}`,
+    ]);
+  if (final.kind === "non-relative") {
+    const target = classifyPackageImportTargetString(final.value);
     return unresolvedCandidate("external", [
       target.kind === "recursive"
         ? `Recursive package import aliases remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`
         : `External-package import targets remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`,
     ]);
   }
-  return resolveExportTarget(input, metadata.path, selected, "imports");
+  return resolveExportTarget(input, metadata.path, final, "imports");
 };
 
 /** Self references use the nearest package scope before dependency lookup. */
@@ -922,7 +943,12 @@ type PackageExportOutcome =
   | { readonly status: "blocked"; readonly cause: PackageTargetBlockCause }
   | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
-/** Only exact non-directory keys participate; wildcard expansion is unsupported. */
+/**
+ * Exact keys win over pattern keys. Without an exact hit, keys containing
+ * exactly one `*` are tried in Node's pattern-key order and a match captures
+ * its enclosed substring for substitution into the selected target string,
+ * which is then revalidated through the exact-target pipeline.
+ */
 const selectPackageExport = (
   value: unknown,
   subpath: string,
@@ -931,6 +957,7 @@ const selectPackageExport = (
 ): PackageExportOutcome => {
   let target = value;
   let declared: string[] = [];
+  let capture: string | null = null;
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const keys = Object.keys(value);
     const hasSubpaths = keys.some((key) => key.startsWith("."));
@@ -942,19 +969,23 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (
-        subpath.endsWith("/") ||
-        subpath.includes("*") ||
-        !Object.hasOwn(value, subpath)
-      )
+      if (subpath.endsWith("/") || subpath.includes("*"))
         return { status: "unmatched", declared };
-      target = Reflect.get(value, subpath);
+      if (Object.hasOwn(value, subpath)) {
+        target = Reflect.get(value, subpath);
+      } else {
+        const pattern = matchPackagePatternKey(keys, subpath);
+        if (pattern === null) return { status: "unmatched", declared };
+        target = Reflect.get(value, pattern.key);
+        capture = pattern.capture;
+      }
     } else if (subpath !== ".") return { status: "unmatched", declared };
   } else if (subpath !== ".") return { status: "unmatched", declared };
+  const packageUrl = packageMetadataUrl(packagePath);
   const selected = selectExportTarget(
     target,
     packageExportConditions(moduleKind),
-    packageMetadataUrl(packagePath),
+    packageUrl,
   );
   if (selected.kind === "invalid" || selected.kind === "invalid-config")
     return { status: "rejected", limitation: selected.limitation };
@@ -970,11 +1001,26 @@ const selectPackageExport = (
       status: "rejected",
       limitation: `The package exports target ${JSON.stringify(selected.value)} must start with "./".`,
     };
-  return {
-    status: "value",
-    value: selected.value,
-    url: selected.url,
-  };
+  if (capture === null)
+    return {
+      status: "value",
+      value: selected.value,
+      url: selected.url,
+    };
+  const expanded = expandPatternString(
+    selected.value,
+    capture,
+    packageUrl,
+    "exports",
+  );
+  if (expanded.kind === "value")
+    return { status: "value", value: expanded.value, url: expanded.url };
+  if (expanded.kind === "non-relative")
+    return {
+      status: "rejected",
+      limitation: `The package exports target ${JSON.stringify(expanded.value)} must start with "./".`,
+    };
+  return { status: "rejected", limitation: expanded.limitation };
 };
 
 type ExportTargetOutcome =
@@ -996,20 +1042,27 @@ const invalidExportTarget = (
 
 // Node checks raw target segments before URL normalization. Compare encoded
 // segment names here; full URL decoding follows array target selection.
+const decodedSegmentIsForbidden = (raw: string): boolean => {
+  const segment = raw.replace(/%[0-9a-f]{2}/giu, (encoded) =>
+    String.fromCharCode(Number.parseInt(encoded.slice(1), 16)),
+  );
+  return (
+    segment === "." ||
+    segment === ".." ||
+    segment.toLowerCase() === "node_modules"
+  );
+};
+
 const forbiddenExportSegment = (value: string): string | undefined =>
   value
     .slice(2)
     .split(/[\\/]/u)
-    .find((raw) => {
-      const segment = raw.replace(/%[0-9a-f]{2}/giu, (encoded) =>
-        String.fromCharCode(Number.parseInt(encoded.slice(1), 16)),
-      );
-      return (
-        segment === "." ||
-        segment === ".." ||
-        segment.toLowerCase() === "node_modules"
-      );
-    });
+    .find((raw) => decodedSegmentIsForbidden(raw));
+
+// Node rejects a forbidden segment in the captured subpath itself, whether or
+// not the selected target interpolates the `*`.
+const forbiddenCapturedSegment = (capture: string): string | undefined =>
+  capture.split("/").find((raw) => decodedSegmentIsForbidden(raw));
 
 const selectStringPackageTarget = (
   value: string,
@@ -1048,6 +1101,48 @@ const selectStringPackageTarget = (
     kind: "value",
     value,
     url,
+  };
+};
+
+/**
+ * Substitute a pattern capture into a selected string target, then validate
+ * the expanded string through the exact-target pipeline so a capture escaping
+ * the package (`../`, `node_modules`) is refused like any declared target.
+ * The capture is validated on its own as well, because Node rejects a
+ * forbidden captured segment even when the target never interpolates it, and
+ * the replacer function keeps `$` sequences in the capture literal instead
+ * of interpreting them as replacement patterns.
+ */
+const expandPatternString = (
+  value: string,
+  capture: string,
+  packageUrl: URL,
+  mapKind: "exports" | "imports",
+):
+  | { readonly kind: "value"; readonly value: string; readonly url: URL }
+  | { readonly kind: "non-relative"; readonly value: string }
+  | { readonly kind: "invalid"; readonly limitation: string } => {
+  const forbidden = forbiddenCapturedSegment(capture);
+  if (forbidden !== undefined)
+    return {
+      kind: "invalid",
+      limitation: `The package ${mapKind === "imports" ? "import" : "exports"} pattern capture ${JSON.stringify(capture)} contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization.`,
+    };
+  const expanded = selectStringPackageTarget(
+    value.replaceAll("*", () => capture),
+    packageUrl,
+    mapKind,
+  );
+  if (expanded.kind === "value")
+    return { kind: "value", value: expanded.value, url: expanded.url };
+  if (expanded.kind === "non-relative")
+    return { kind: "non-relative", value: expanded.value };
+  return {
+    kind: "invalid",
+    limitation:
+      "limitation" in expanded
+        ? expanded.limitation
+        : "The expanded package target did not name a file.",
   };
 };
 
