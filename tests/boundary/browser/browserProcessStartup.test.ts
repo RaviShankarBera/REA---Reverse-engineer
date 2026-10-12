@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -9,6 +10,7 @@ import {
 } from "../../support/process/processFixture.js";
 
 import {
+  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
 } from "../../../src/browser/BrowserProcessStartup.js";
@@ -86,11 +88,54 @@ describe("browser process startup", () => {
         failure: "timeout",
         exitCode: null,
         signalCode: null,
+        startupTimeoutMs: 20,
       });
       expect(String(failure)).toContain("stderr=<empty>");
+      expect(String(failure)).toContain("startup_timeout_ms=20");
     } finally {
       child.kill("SIGKILL");
       expect(await waitForExit(child, 5_000)).toBe(true);
+    }
+  });
+
+  it("names the owner's deadline when a caller omits one", async ({
+    processes,
+  }) => {
+    const root = await temporaryRoot();
+    const child = processes.spawn(process.execPath, [
+      "-e",
+      "setTimeout(() => process.exit(3), 10)",
+    ]);
+
+    const failure = await waitForBrowserDevtoolsPort({
+      child,
+      executable: process.execPath,
+      activePortPath: join(root, "DevToolsActivePort"),
+      stderr: () => "owner default fixture",
+      pollIntervalMs: 5,
+    }).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(BrowserStartupError);
+    expect(failure).toMatchObject({
+      failure: "exited",
+      startupTimeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+    });
+    expect(String(failure)).toContain(
+      `startup_timeout_ms=${String(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS)}`,
+    );
+  });
+
+  it("keeps one owner for the DevToolsActivePort wait", async () => {
+    expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
+    const callers = [
+      "../../../scripts/verify-real-browser.mjs",
+      "../../../scripts/lib/browser-runtime-e2e.mjs",
+      "../../../scripts/lib/browser-nested-source-map-e2e.mjs",
+    ];
+    for (const caller of callers) {
+      const source = await readFile(new URL(caller, import.meta.url), "utf8");
+      expect(source).toContain("BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS");
+      expect(/timeoutMs:\s*[\d_]+\b/u.test(source)).toBe(false);
     }
   });
 });

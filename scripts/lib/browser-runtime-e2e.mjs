@@ -10,7 +10,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CdpBrowserProvider } from "../../dist/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import { waitForBrowserDevtoolsPort } from "../../dist/browser/BrowserProcessStartup.js";
+import {
+  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+  waitForBrowserDevtoolsPort,
+} from "../../dist/browser/BrowserProcessStartup.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webExecutionSchema } from "../../dist/domain/webExecution.js";
 import { webEventListenersSchema } from "../../dist/domain/webEventListeners.js";
@@ -56,7 +59,7 @@ export async function verifyBrowserRuntime(
       executable,
       activePortPath: join(profile, "DevToolsActivePort"),
       stderr: () => stderr,
-      timeoutMs: 20_000,
+      timeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
     });
     const endpoint = `http://127.0.0.1:${port}`;
     const targets = await new CdpBrowserProvider().listTargets({
