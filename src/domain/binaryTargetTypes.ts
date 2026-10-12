@@ -136,6 +136,7 @@ export type BinaryTarget =
           | "hsp"
           | "app-pack"
           | "asar"
+          | "ines"
           | "dmg"
           | "pkg";
       })
