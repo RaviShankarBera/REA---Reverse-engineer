@@ -47,11 +47,29 @@ export const javaScriptAnalysisTransferDescriptorSchema = z.strictObject({
 });
 type Descriptor = z.output<typeof javaScriptAnalysisTransferDescriptorSchema>;
 
-/** Conservative retained-object and sealing expansion for validated transfer rows. */
+/**
+ * Retained-object expansion for validated transfer rows, including the
+ * seal-time duplicate representation.
+ *
+ * Measured metrology (single 3.2 MB minified source, 210 MB / 260,560-record
+ * graph transfer): admitting at 3x completed with 100k nodes retained and a
+ * 1.12 GB parent peak RSS, i.e. ~4x transfer bytes end to end including the
+ * separately-charged static checkpoint transient. Parsed small-fact objects
+ * retain ~2.5-3x their JSON bytes. During semantic graph sealing,
+ * `parseElementSteps` clones every element via `safeParse` while the
+ * original container arrays stay live through `...container`, so peak
+ * parent memory during sealing is approximately 2x the retained collection
+ * size. The 8 MB per-record cap bounds single-object spikes, and the parent
+ * result budget this feeds is already halved for host-side control and
+ * transient copies. Charging 5x (3x retention + 2x seal overlap) keeps
+ * headroom without refusing work that fits several times over (8x refused
+ * the measured transfer against 1.4 GB free; 4x admitted but undercounted
+ * seal-time peak).
+ */
 export const javaScriptTransferRetentionBytes = (
   bytes: number,
   records: number,
-): number => bytes * 8 + records * 64;
+): number => bytes * 5 + records * 64;
 
 /** Larger streamed files require corresponding parent admission capacity. */
 export const javaScriptTransferByteBudget = (

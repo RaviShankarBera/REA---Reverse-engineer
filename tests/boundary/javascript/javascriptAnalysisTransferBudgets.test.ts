@@ -9,6 +9,7 @@ import { completeJavaScriptAnalysisSteps } from "../../../src/application/javasc
 import { projectJavaScriptSemanticFileSteps } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import {
   javaScriptTransferByteBudget,
+  javaScriptTransferRetentionBytes,
   measureJavaScriptModuleTransfer,
   writeJavaScriptAnalysisTransfer,
   readJavaScriptAnalysisTransfer,
@@ -97,4 +98,45 @@ it("enforces the offered complete-file byte budget while preserving authenticate
       2 ** 31 + 1,
     ),
   ).rejects.toBeInstanceOf(RangeError);
+});
+
+it("charges measured retained expansion for production transfer shapes", () => {
+  // Recorded admission refusal (#1387 follow-up): a single 3.2 MB minified
+  // source produced a 210,238,252-byte / 260,560-record graph transfer with
+  // 1,434,390,040 bytes remaining in the parent budget. The worker and its
+  // transfer fit their own budgets; only the retention estimate refused.
+  const graphBytes = 210_238_252;
+  const graphRecords = 260_560;
+  const moduleBytes = 1_892_116;
+  const moduleRecords = 2_295;
+  const remaining = 1_434_390_040;
+  const moduleEstimate = javaScriptTransferRetentionBytes(
+    moduleBytes,
+    moduleRecords,
+  );
+  const graphEstimate = javaScriptTransferRetentionBytes(
+    graphBytes,
+    graphRecords,
+  );
+  expect(moduleEstimate).toBe(9_607_460);
+  expect(graphEstimate).toBe(1_067_867_100);
+  // Calibrated to measured metrology: admitting at this charge completed with
+  // 100k nodes retained and a 1.12 GB parent peak RSS. The 5x charge accounts
+  // for both retention (~2.5-3x) and the seal-time duplicate representation
+  // (~2x while parseElementSteps clones live collections). The previous 8x
+  // charge (1,714,012,544 bytes) refused this transfer against the same budget.
+  expect(graphEstimate / graphBytes).toBeGreaterThanOrEqual(5);
+  expect(graphEstimate / graphBytes).toBeLessThan(5.5);
+  expect(moduleEstimate + graphEstimate).toBeLessThanOrEqual(remaining);
+  expect(2 * (moduleEstimate + graphEstimate)).toBeGreaterThan(remaining);
+});
+
+it("charges retention monotonically from empty transfers", () => {
+  expect(javaScriptTransferRetentionBytes(0, 0)).toBe(0);
+  expect(javaScriptTransferRetentionBytes(1, 0)).toBe(5 + 64 * 0);
+  expect(javaScriptTransferRetentionBytes(0, 1)).toBe(64);
+  const small = javaScriptTransferRetentionBytes(1024, 10);
+  const large = javaScriptTransferRetentionBytes(2048, 20);
+  expect(large).toBeGreaterThan(small);
+  expect(large).toBe(2 * small);
 });
