@@ -22,6 +22,7 @@ import {
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { compactAdvertisedInputSchema } from "../contracts/compactInputSchema.js";
+import { acceptInputKeyAliases } from "../contracts/inputKeyAliases.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -72,10 +73,11 @@ export class EvidenceMcpServer extends McpServer {
   }
 
   /**
-   * Compact the advertised input schema of every registered tool when the
-   * compact profile is active. The registered canonical schema, its parser,
-   * and output schemas are untouched; only the advertised JSON Schema
-   * projection is rendered within the provider's per-schema size budget.
+   * Accept the common input key aliases of every registered tool during
+   * validation, and compact the advertised input schema when the compact
+   * profile is active. The registered canonical schema and output schemas are
+   * untouched; the advertised JSON Schema keeps only canonical keys and is
+   * rendered within the provider's per-schema size budget when compacting.
    * The signatures mirror the SDK's registrations so call sites keep their
    * inferred handler argument types.
    */
@@ -97,21 +99,23 @@ export class EvidenceMcpServer extends McpServer {
     callback: ToolCallback<InputArgs>,
   ): RegisteredTool {
     const budget = this.compactPresentation?.budgetBytes;
+    const acceptedSchema =
+      config?.inputSchema === undefined
+        ? undefined
+        : acceptInputKeyAliases(config.inputSchema);
     const inputSchema =
-      budget !== undefined &&
-      config !== undefined &&
-      hasAdvertisedInputJsonSchema(config.inputSchema)
+      budget !== undefined && hasAdvertisedInputJsonSchema(acceptedSchema)
         ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
+            acceptedSchema as Parameters<
               typeof transformAdvertisedInputJsonSchema
             >[0],
             (projected) =>
               compactAdvertisedInputSchema(projected, budget).schema,
           )
-        : undefined;
+        : acceptedSchema;
     return super.registerTool(
       name,
-      (inputSchema === undefined
+      (inputSchema === config?.inputSchema
         ? config
         : { ...config, inputSchema }) as never,
       callback as never,

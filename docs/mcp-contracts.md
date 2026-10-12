@@ -544,6 +544,17 @@ after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
 
+### Input key aliases
+
+Agents carry argument names from one tool to the next: after a tool that takes
+an `address`, they send `address` to a procedure-scoped tool, and they send
+`query` to a search tool. Canonical validation accepts these two aliases
+wherever an input declares the canonical key and not the alias itself:
+`address` for `procedure`, and `query` for `pattern`. The alias is renamed
+before validation, so the handler and the recorded Evidence parameters see
+only the canonical key. An input that sends both the alias and its canonical
+key is rejected as before, and advertised schemas list only canonical keys.
+
 ### Compact input schema profile
 
 Some function-calling providers reject a request while any single tool's
