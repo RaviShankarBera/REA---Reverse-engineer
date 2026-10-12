@@ -42,6 +42,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { indexJavaScriptAmbientWritesSteps } from "./javascriptSemanticAmbientWrites.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
@@ -99,6 +100,7 @@ interface AddBindingInput {
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
+  readonly runtimeImport?: boolean;
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -128,6 +130,7 @@ export function* indexJavaScriptBindingsSteps(
 ): Generator<void, JavaScriptSemanticAnalysisState> {
   const state = createState(program);
   yield* collectDefinitionsSteps(program, state);
+  yield* indexJavaScriptAmbientWritesSteps(program, state);
   return state;
 }
 
@@ -428,15 +431,18 @@ export function* indexJavaScriptElectronIdentitySteps(
   };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
-    (root, kind) => {
-      if (kind === "opaque-call") return interop.opaqueMutationPath(root);
+    (node, kind) => {
+      if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
+      const { root, members } = electronMemberPath(node);
       const exported = kind === "binding" ? undefined : rootExport(root);
-      return exported === undefined
-        ? (interop.intrinsicPath(root) ??
+      const path =
+        exported === undefined
+          ? (interop.intrinsicPath(root) ??
             (kind === "member"
               ? interop.boundIntrinsic(root)?.path
               : undefined))
-        : ["electron", ...exported];
+          : ["electron", ...exported];
+      return path === undefined ? [] : [[...path, ...members]];
     },
     interop.intrinsicInvocation,
     interop.staticString,
@@ -538,6 +544,7 @@ const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {
     linkedRequireCalls: new WeakSet(),
     moduleLinkBindings: new WeakMap(),
     conditionalInitializers: new WeakSet(),
+    ambientWrites: new SemanticPropertyPathCoverage(),
   };
 };
 
@@ -992,6 +999,12 @@ const bindImports = (
       definitionNode: specifier.local,
       initializer: null,
       directOrigin: { specifier: node.source.value, importedPath },
+      runtimeImport:
+        node.importKind !== "type" &&
+        node.importKind !== "typeof" &&
+        (!t.isImportSpecifier(specifier) ||
+          (specifier.importKind !== "type" &&
+            specifier.importKind !== "typeof")),
     });
   }
 };
@@ -1168,6 +1181,7 @@ const addBinding = (input: AddBindingInput): void => {
     definitionNode,
     initializer,
     directOrigin,
+    runtimeImport,
     projection = [],
   } = input;
   let binding = scope.bindings.get(name);
@@ -1182,6 +1196,7 @@ const addBinding = (input: AddBindingInput): void => {
   if (initializer !== null)
     binding.initializers.push({ node: initializer, projection });
   if (directOrigin !== undefined) binding.directOrigins.push(directOrigin);
+  binding.runtimeImport ||= runtimeImport === true;
 };
 
 const createBinding = (
@@ -1201,6 +1216,7 @@ const createBinding = (
   initializers: [],
   referenceInitializers: [],
   directOrigins: [],
+  runtimeImport: false,
 });
 
 const addAssignment = (

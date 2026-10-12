@@ -51,12 +51,38 @@ import {
   semanticResourceLimitReason,
 } from "./javascriptSemanticResourceLimits.js";
 
+interface MemoizedEvaluation<T> {
+  readonly value: T;
+  readonly dependencies: ReadonlySet<string>;
+}
+
+interface EvaluationMemo {
+  readonly values: Map<
+    t.Node | undefined,
+    Map<string, Map<number, MemoizedEvaluation<JavaScriptSemanticValue>>>
+  >;
+  readonly provenance: Map<
+    string,
+    Map<number, MemoizedEvaluation<JavaScriptBindingProvenance>>
+  >;
+  cycleEpoch: number;
+  readonly dependencyFrames: Set<string>[];
+}
+
+const createEvaluationMemo = (): EvaluationMemo => ({
+  values: new Map(),
+  provenance: new Map(),
+  cycleEpoch: 0,
+  dependencyFrames: [],
+});
+
 interface EvaluationContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly bindings: Set<string>;
   readonly expressionDepth: number;
   readonly capturePoint?: t.Node;
   readonly primitiveBindingValues: Map<string, JavaScriptSemanticValue>;
+  readonly memo: EvaluationMemo;
 }
 
 const primitiveBindingValuesByState = new WeakMap<
@@ -112,6 +138,7 @@ export const evaluateSemanticBinding = (
     bindings: new Set(),
     expressionDepth: 0,
     primitiveBindingValues: primitiveBindingValuesFor(state),
+    memo: createEvaluationMemo(),
   });
 
 /** Evaluate an inert expression, optionally at an earlier reference capture. */
@@ -125,6 +152,7 @@ export const evaluateSemanticExpression = (
     bindings: new Set(),
     expressionDepth: 0,
     primitiveBindingValues: primitiveBindingValuesFor(state),
+    memo: createEvaluationMemo(),
   };
   return evaluateExpression(
     node,
@@ -144,14 +172,81 @@ export const evaluateSemanticProvenance = (
     bindings: new Set(),
     expressionDepth: 0,
     primitiveBindingValues: primitiveBindingValuesFor(state),
+    memo: createEvaluationMemo(),
   });
 
+const readMemoizedEvaluation = <T>(
+  entry: MemoizedEvaluation<T> | undefined,
+  context: EvaluationContext,
+): T | undefined => {
+  if (
+    entry === undefined ||
+    [...entry.dependencies].some((id) => context.bindings.has(id))
+  )
+    return undefined;
+  const parent = context.memo.dependencyFrames.at(-1);
+  if (parent !== undefined)
+    for (const dependency of entry.dependencies) parent.add(dependency);
+  return entry.value;
+};
+
+const collectEvaluationDependencies = <T>(
+  binding: JavaScriptSemanticBindingState,
+  context: EvaluationContext,
+  evaluate: () => T,
+): MemoizedEvaluation<T> => {
+  const dependencies = new Set([binding.bindingId]);
+  context.memo.dependencyFrames.push(dependencies);
+  try {
+    return { value: evaluate(), dependencies };
+  } finally {
+    context.memo.dependencyFrames.pop();
+    const parent = context.memo.dependencyFrames.at(-1);
+    if (parent !== undefined)
+      for (const dependency of dependencies) parent.add(dependency);
+  }
+};
+
+/** Cache completed query-local results without publishing mutable values globally. */
 const evaluateBinding = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  if (context.bindings.has(binding.bindingId))
+  if (context.bindings.has(binding.bindingId)) {
+    context.memo.cycleEpoch += 1;
     return { status: "cycle", reason: `Alias cycle at ${binding.name}.` };
+  }
+  let captured = context.memo.values.get(context.capturePoint);
+  if (captured === undefined) {
+    captured = new Map();
+    context.memo.values.set(context.capturePoint, captured);
+  }
+  let depths = captured.get(binding.bindingId);
+  if (depths === undefined) {
+    depths = new Map();
+    captured.set(binding.bindingId, depths);
+  }
+  const prior = readMemoizedEvaluation(
+    depths?.get(context.expressionDepth),
+    context,
+  );
+  if (prior !== undefined) return prior;
+  const epoch = context.memo.cycleEpoch;
+  const result = collectEvaluationDependencies(binding, context, () =>
+    evaluateBindingValue(binding, context),
+  );
+  // Conditional merging can hide a descendant cycle behind unknown/ambiguous.
+  // Such results depend on the active ancestor stack and must be recomputed.
+  if (context.memo.cycleEpoch === epoch) {
+    depths.set(context.expressionDepth, result);
+  }
+  return result.value;
+};
+
+const evaluateBindingValue = (
+  binding: JavaScriptSemanticBindingState,
+  context: EvaluationContext,
+): JavaScriptSemanticValue => {
   if (
     context.capturePoint !== undefined &&
     !semanticBindingPrecedesCapture(
@@ -568,6 +663,37 @@ const provenanceForBinding = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
+  if (context.bindings.has(binding.bindingId)) {
+    context.memo.cycleEpoch += 1;
+    return semanticUnresolvedProvenance(
+      "cycle",
+      `Alias cycle at ${binding.name}.`,
+    );
+  }
+  let depths = context.memo.provenance.get(binding.bindingId);
+  const prior = readMemoizedEvaluation(
+    depths?.get(context.expressionDepth),
+    context,
+  );
+  if (prior !== undefined) return prior;
+  const epoch = context.memo.cycleEpoch;
+  const result = collectEvaluationDependencies(binding, context, () =>
+    provenanceForBindingUncached(binding, context),
+  );
+  if (context.memo.cycleEpoch === epoch) {
+    if (depths === undefined) {
+      depths = new Map();
+      context.memo.provenance.set(binding.bindingId, depths);
+    }
+    depths.set(context.expressionDepth, result);
+  }
+  return result.value;
+};
+
+const provenanceForBindingUncached = (
+  binding: JavaScriptSemanticBindingState,
+  context: EvaluationContext,
+): JavaScriptBindingProvenance => {
   const provenance = provenanceForBindingValue(binding, context);
   const assigned = binding.definitions.some(
     ({ kind }) => kind === "assignment",
@@ -592,11 +718,6 @@ const provenanceForBindingValue = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  if (context.bindings.has(binding.bindingId))
-    return semanticUnresolvedProvenance(
-      "cycle",
-      `Alias cycle at ${binding.name}.`,
-    );
   if (binding.directOrigins.length > 0)
     return semanticOriginsProvenance(binding.directOrigins);
   if (binding.initializers.length === 0) return semanticLocalProvenance();
@@ -758,6 +879,7 @@ const mergeValues = (
 const nestedContext = (context: EvaluationContext): EvaluationContext => ({
   state: context.state,
   primitiveBindingValues: context.primitiveBindingValues,
+  memo: context.memo,
   ...(context.capturePoint === undefined
     ? {}
     : { capturePoint: context.capturePoint }),
