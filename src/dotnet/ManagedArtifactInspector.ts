@@ -179,7 +179,9 @@ const runtimeFamilyFor = (
   );
   let runtimeFamily: ManagedArtifactInspection["classification"]["runtime_family"] =
     "unknown";
-  if ((cli.flags & 1) === 0) {
+  // crossgen2 clears ILONLY on ReadyToRun output, so only a clear flag
+  // without the ReadyToRun signature indicates mixed CLR/native code.
+  if ((cli.flags & 1) === 0 && !cli.readyToRunSignature) {
     runtimeFamily = "mixed-clr-native";
     evidence.push({
       code: "cli-il-only-clear",
@@ -238,8 +240,8 @@ const implementationFor = (
   cli: ManagedCliHeader,
   metadata: ManagedMetadataLayout,
 ): ManagedArtifactInspection["classification"]["implementation"] => {
-  if ((cli.flags & 1) === 0) return "cpp-cli-mixed";
   if (cli.readyToRunSignature) return "cil-and-ready-to-run";
+  if ((cli.flags & 1) === 0) return "cpp-cli-mixed";
   return (metadata.rowCounts[6] ?? 0) === 0 ? "metadata-only" : "cil";
 };
 
