@@ -16,6 +16,7 @@ import {
   type ManagedFieldAccess,
   type ManagedMemberRef,
   type ManagedMethod,
+  type ManagedUserString,
   type MemberRefCore,
   type MethodCore,
   type TypeRange,
@@ -27,6 +28,7 @@ import {
   metadataCodedTokenInvalidReason,
   readMetadataBlob,
   readMetadataString,
+  readMetadataUserString,
 } from "./ManagedMetadataHeaps.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
@@ -315,6 +317,63 @@ export const parseMethods = ({
     }, issues);
   }
   return { methods, core, issues };
+};
+
+/** Bookkeeping per distinct ldstr token: its set entry and its sorted slot. */
+const USER_STRING_TOKEN_BYTES = 128;
+
+/** Decode each distinct #US literal an inspected method loads, in token order. */
+export const parseUserStrings = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  methods: readonly ManagedMethod[],
+): {
+  readonly userStrings: readonly ManagedUserString[];
+  readonly issues: readonly ManagedParseIssue[];
+} => {
+  const budget = managedDecodeBudget(layout);
+  const userStrings: ManagedUserString[] = [];
+  const issues: ManagedParseIssue[] = [];
+  const tokens = new Set<string>();
+  try {
+    // Only ldstr loads a literal; a malformed ldtoken can carry a 0x70 token.
+    for (const method of methods)
+      for (const { opcode, operand } of method.body.anchors)
+        if (opcode === "ldstr" && operand !== null && !tokens.has(operand)) {
+          budget.admitTransient(USER_STRING_TOKEN_BYTES, null);
+          tokens.add(operand);
+        }
+    if (tokens.size > 0 && layout.userStrings === null) {
+      // A missing stream is one fact about the metadata, not one per token.
+      issues.push(
+        admitManagedProjection(
+          {
+            code: "missing-stream",
+            scope: "metadata.#US",
+            offset: null,
+            detail: `${String(tokens.size)} distinct ldstr operand(s) reference #US, but the metadata has no #US stream`,
+          },
+          budget,
+        ),
+      );
+      return { userStrings, issues };
+    }
+    // Tokens are fixed-width lowercase hex, so string order is token order.
+    for (const token of [...tokens].sort()) {
+      const failures: ManagedParseIssue[] = [];
+      readManagedValue(() => {
+        const { offset, value } = readMetadataUserString(bytes, layout, token);
+        userStrings.push(
+          admitManagedProjection({ token, offset, value }, budget),
+        );
+      }, failures);
+      for (const failure of failures)
+        issues.push(admitManagedProjection(failure, budget));
+    }
+    return { userStrings, issues };
+  } finally {
+    budget.releaseTransient();
+  }
 };
 
 const targetKind = (token: string): ManagedCallEdge["target_kind"] =>

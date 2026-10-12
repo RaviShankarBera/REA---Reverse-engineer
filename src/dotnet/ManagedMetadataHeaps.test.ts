@@ -16,6 +16,7 @@ describe("managed metadata heaps", () => {
       strings: { name: "#Strings", offset: 0, size: 0 },
       guid: { name: "#GUID", offset: 0, size: 0 },
       blob: { name: "#Blob", offset: 0, size: bytes.length },
+      userStrings: null,
       tables: new Map(),
       rowCounts: [],
       stringIndexSize: 2,

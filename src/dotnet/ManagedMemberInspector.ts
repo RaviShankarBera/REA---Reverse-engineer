@@ -33,6 +33,7 @@ import {
   parseFields,
   parseMemberRefs,
   parseMethods,
+  parseUserStrings,
   type SelectedTypeTokens,
 } from "./ManagedMemberRows.js";
 
@@ -68,6 +69,7 @@ const unavailable = (
       },
       types: [],
       exported_types: null,
+      user_strings: null,
       fields: [],
       methods: [],
       member_refs: [],
@@ -181,6 +183,8 @@ export const inspectManagedMembersBytes = (
       selected,
     });
     issues.push(...fields.issues, ...methods.issues);
+    const userStrings = parseUserStrings(bytes, layout, methods.methods);
+    issues.push(...userStrings.issues);
     const coverageIssues = uniqueManagedParseIssues(issues);
     const incompleteMembers =
       [...fields.fields, ...memberRefs.refs, ...methods.methods].some(
@@ -228,6 +232,7 @@ export const inspectManagedMembersBytes = (
           member_refs: memberRefs.refs,
           call_edges: related.callEdges,
           field_accesses: related.fieldAccesses,
+          user_strings: userStrings.userStrings,
           selection,
           coverage: {
             state:
@@ -240,11 +245,12 @@ export const inspectManagedMembersBytes = (
             "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
             "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
             "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
+            "User strings are the #US literals loaded by ldstr in the inspected method bodies; instruction anchors and normalized CIL digests keep their build-local tokens.",
             "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer, custom modifier, and typed reference forms; class and valuetype operands keep their encoded TypeDefOrRefOrSpec values, and unsupported forms such as vararg sentinels retain raw signature hashes.",
             ...(selection === null
               ? []
               : [
-                  "Types, fields, methods, call edges, and field accesses cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
+                  "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
                 ]),
             ...(unreadableNames === 0
               ? []
