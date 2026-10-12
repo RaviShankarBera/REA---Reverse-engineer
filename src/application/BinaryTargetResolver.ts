@@ -31,7 +31,7 @@ import {
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import { mzWindowsHeaderOffset } from "../domain/dosMz.js";
+import { mzWindowsHeader } from "../domain/dosMz.js";
 import {
   hasZipSignature,
   isZipPackageFormat,
@@ -40,6 +40,7 @@ import {
 
 import {
   parseExecutableHeader,
+  parseMzHeader,
   parsePeRecord,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
@@ -412,11 +413,27 @@ const readExecutableMetadata = async (
   const fileSize = (await handle.stat()).size;
   throwIfTargetResolutionCancelled(signal);
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
-    const offset = mzWindowsHeaderOffset(bytes);
-    if (offset !== null) {
+    let windowsHeader = mzWindowsHeader(bytes, fileSize);
+    if (windowsHeader?.kind === "declared") {
+      const { offset } = windowsHeader;
       if (offset < 64)
         return err("invalid Windows new-header offset in MZ image");
       return readPeMetadata(handle, offset, signal);
+    }
+    if (windowsHeader?.kind === "candidate") {
+      const signature = Buffer.alloc(4);
+      const observed = await handle.read(
+        signature,
+        0,
+        signature.length,
+        windowsHeader.offset,
+      );
+      throwIfTargetResolutionCancelled(signal);
+      if (observed.bytesRead !== signature.length)
+        return err("truncated Windows executable signature in MZ image");
+      if (signature.equals(Buffer.from("PE\0\0")))
+        return readPeMetadata(handle, windowsHeader.offset, signal);
+      windowsHeader = null;
     }
     // MZ relocation records may extend past the initial probe; their format
     // bounds are at most 65535 records inside a 65535-paragraph header.
@@ -433,13 +450,13 @@ const readExecutableMetadata = async (
       const table = Buffer.alloc(tableEnd);
       const observed = await handle.read(table, 0, table.length, 0);
       throwIfTargetResolutionCancelled(signal);
-      return parseExecutableHeader(
+      return parseMzHeader(
         table.subarray(0, observed.bytesRead),
-        hostArchitecture,
         fileSize,
+        windowsHeader,
       );
     }
-    return parseExecutableHeader(bytes, hostArchitecture, fileSize);
+    return parseMzHeader(bytes, fileSize, windowsHeader);
   }
   if (bytes.length >= 8) {
     const magic = bytes.readUInt32BE(0);

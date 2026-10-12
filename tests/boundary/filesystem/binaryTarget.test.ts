@@ -804,6 +804,36 @@ describe("binary Info.plist app bundle targets", () => {
 });
 
 describe("DOS binary target I/O", () => {
+  it.each([96, 8192])(
+    "recognizes a PE DLL at offset %i after a short DOS stub",
+    async (offset) => {
+      const directory = await createTestTempDirectory("rea-short-stub-target-");
+      const path = join(directory, "short.dll");
+      const bytes = pe(0x8664, offset, 0x2002);
+      dosMz(64).copy(bytes, 0, 0, 60);
+      await writeFile(path, bytes);
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: {
+          format: "pe",
+          architecture: "x86_64",
+          executableRole: "shared-library",
+        },
+      });
+      bytes.fill(0, offset, offset + 4);
+      await writeFile(path, bytes);
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { format: "dos-mz", architecture: "x86" },
+      });
+      await writeFile(path, bytes.subarray(0, 96));
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { format: "dos-mz", architecture: "x86" },
+      });
+    },
+  );
+
   it("validates a complete DOS file beyond the initial metadata probe", async () => {
     const directory = await createTestTempDirectory("rea-dos-target-");
     const path = join(directory, "legacy.exe");

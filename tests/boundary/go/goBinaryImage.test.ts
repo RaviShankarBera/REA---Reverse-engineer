@@ -1,9 +1,23 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
+import { dosMz } from "../../../src/domain/binaryTarget.fixture.js";
 import {
   createGoBinaryFixture,
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
+
+it.each([32, 64] as const)(
+  "reads %d-bit PE build metadata after a short DOS stub",
+  (bits) => {
+    const fixture = createGoBinaryFixture({ format: "pe", bits });
+    dosMz(64).copy(fixture.bytes, 0, 0, 60);
+    expect(readGoBinaryImage(fixture.bytes)).toMatchObject({
+      format: "pe",
+      bits,
+      build_info: { go_version: "go1.26.0", module_text: GO_MODULE_TEXT },
+    });
+  },
+);
 
 it.each([
   ["elf", 32, "little"],

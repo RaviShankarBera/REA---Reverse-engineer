@@ -12,17 +12,24 @@ export interface DosMzHeader {
   readonly entryOffset: number;
 }
 
+/** A Windows declaration or an in-file PE signature still awaiting observation. */
+export type MzWindowsHeader = {
+  readonly offset: number;
+  readonly kind: "declared" | "candidate";
+} | null;
+
 /**
- * Locate a Windows new-header declaration without interpreting a short DOS
- * header's load-module or relocation-table bytes at 0x3c as e_lfanew. A
- * new-header pointer must lie in a sufficiently large header and outside
- * actual relocation records. Zero-sized legacy stubs remain eligible for
- * PE signature validation.
+ * Locate a Windows new-header declaration or a possible PE pointer in a short
+ * DOS stub. Short headers need an observed PE signature because their bytes at
+ * 0x3c can also be ordinary load-module data. Relocation records cannot declare
+ * a new header. Zero-sized legacy stubs remain eligible for PE validation.
  */
-export const mzWindowsHeaderOffset = (bytes: Buffer): number | null => {
+export const mzWindowsHeader = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+): MzWindowsHeader => {
   if (bytes.length < 64) return null;
   const headerBytes = bytes.readUInt16LE(8) * 16;
-  if (headerBytes !== 0 && headerBytes < 64) return null;
   const relocationCount = bytes.readUInt16LE(6);
   const tableStart = bytes.readUInt16LE(24);
   if (
@@ -33,7 +40,15 @@ export const mzWindowsHeaderOffset = (bytes: Buffer): number | null => {
   )
     return null;
   const offset = bytes.readUInt32LE(60);
-  return offset === 0 ? null : offset;
+  if (offset === 0) return null;
+  const shortHeader = headerBytes !== 0 && headerBytes < 64;
+  const observedPe =
+    offset >= 64 &&
+    bytes.subarray(offset, offset + 4).equals(Buffer.from("PE\0\0"));
+  if (!shortHeader || observedPe) return { offset, kind: "declared" };
+  return offset >= 64 && offset > bytes.length - 4 && offset <= fileSize - 4
+    ? { offset, kind: "candidate" }
+    : null;
 };
 
 /**
@@ -44,12 +59,15 @@ export const mzWindowsHeaderOffset = (bytes: Buffer): number | null => {
 export const parseDosMzHeader = (
   bytes: Buffer,
   fileSize = bytes.length,
+  windowsHeader = mzWindowsHeader(bytes, fileSize),
 ): Result<DosMzHeader, string> => {
   if (bytes.length < 28 || bytes.toString("ascii", 0, 2) !== "MZ")
     return err("invalid or truncated DOS MZ header");
   if (!Number.isSafeInteger(fileSize) || fileSize < bytes.length)
     return err("invalid DOS MZ file length");
-  if (mzWindowsHeaderOffset(bytes) !== null)
+  if (windowsHeader?.kind === "candidate")
+    return err("unobserved Windows executable signature in MZ image");
+  if (windowsHeader?.kind === "declared")
     return err("MZ declares a Windows new header; it is not a DOS-only image");
   const lastPageBytes = bytes.readUInt16LE(2);
   const pages = bytes.readUInt16LE(4);

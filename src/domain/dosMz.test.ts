@@ -2,9 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import { dosMz, pe } from "./binaryTarget.fixture.js";
 import { parseExecutableHeader } from "./binaryTarget.js";
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
+import { mzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
 
 describe("DOS MZ load-module validation", () => {
+  it("recognizes PE records after a short custom DOS stub", () => {
+    const bytes = pe(0x8664, 96, 0x2002);
+    dosMz(64).copy(bytes, 0, 0, 60);
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: {
+        format: "pe",
+        architecture: "x86_64",
+        executableRole: "shared-library",
+      },
+    });
+    expect(parseDosMzHeader(bytes).ok).toBe(false);
+    expect(parseExecutableHeader(bytes.subarray(0, 100), "x64").ok).toBe(false);
+    expect(parseExecutableHeader(bytes.subarray(0, 96), "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz" },
+    });
+  });
+
   it("separates initialized module and appended overlay bytes", () => {
     const image = dosMz(480);
     const bytes = Buffer.concat([image, Buffer.from("overlay")]);
@@ -33,7 +52,7 @@ describe("DOS MZ load-module validation", () => {
     bytes.writeUInt16LE(1, 62);
     bytes.writeUInt16LE(8, 66);
     expect(bytes.readUInt32LE(60)).toBe(65536);
-    expect(mzWindowsHeaderOffset(bytes)).toBeNull();
+    expect(mzWindowsHeader(bytes)).toBeNull();
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
       ok: true,
       value: { format: "dos-mz" },
@@ -58,7 +77,7 @@ describe("DOS MZ load-module validation", () => {
     bytes.writeUInt16LE(4, 8);
     bytes.writeUInt16LE(1, 6);
     bytes.writeUInt16LE(28, 24);
-    expect(mzWindowsHeaderOffset(bytes)).toBe(64);
+    expect(mzWindowsHeader(bytes)).toEqual({ kind: "declared", offset: 64 });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
       ok: true,
       value: { format: "pe", architecture: "x86_64" },

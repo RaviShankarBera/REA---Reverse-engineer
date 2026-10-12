@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { elf, fat, thinMach } from "../domain/binaryTarget.fixture.js";
+import {
+  dosMz,
+  elf,
+  fat,
+  pe,
+  thinMach,
+} from "../domain/binaryTarget.fixture.js";
 import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import {
   ghidraJavaEnvironment,
@@ -564,6 +570,38 @@ describe("Ghidra FAT native decompiler admission", () => {
     expect(
       result.checks.find(({ name }) => name === "native_decompiler")?.detail,
     ).toContain("could not be established");
+  });
+});
+
+it("keeps an out-of-prefix short-stub PE header unknown instead of rejecting it as DOS", () => {
+  const bytes = pe(0x8664, 8192);
+  dosMz(64).copy(bytes, 0, 0, 60);
+  const result = inspectGhidraInstallation(
+    {
+      environment: {},
+      installDir: WINDOWS_INSTALL,
+      platform: "win32",
+      architecture: "x64",
+    },
+    host({
+      readText: (path) =>
+        path === WINDOWS_PROPERTIES
+          ? `application.version=${SUPPORTED_GHIDRA_VERSION}\n`
+          : undefined,
+      executable: (path) =>
+        path === WINDOWS_HEADLESS || path === WINDOWS_DECOMPILER,
+      executableHeader: () => ({
+        bytes: bytes.subarray(0, 4096),
+        size: bytes.length,
+      }),
+    }),
+  );
+  expect(result.status).toBe("available");
+  expect(
+    result.checks.find(({ name }) => name === "native_decompiler"),
+  ).toMatchObject({
+    status: "passed",
+    detail: expect.stringContaining("could not be established"),
   });
 });
 

@@ -7,9 +7,23 @@ import { classifyArtifactContent } from "../../../src/artifacts/inventory/Artifa
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactHash.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+import { dosMz, pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("MZ artifact classification", () => {
+  it("confirms a short DOS stub's PE signature before choosing the format", () => {
+    const bytes = pe(0x8664, 96, 0x2002);
+    dosMz(64).copy(bytes, 0, 0, 60);
+    expect(classifyArtifactContent("short.dll", bytes).format).toBe("pe");
+    expect(
+      classifyArtifactContent("short.dll", bytes.subarray(0, 96), bytes.length)
+        .format,
+    ).toBe("unknown");
+    expect(
+      classifyArtifactContent("stub.exe", bytes.subarray(0, 96)).format,
+    ).toBe("dos-mz");
+  });
+
   it("rejects a Windows header pointer overlapping the DOS header", () => {
     expect(classifyArtifactContent("invalid.exe", peFixture(32))).toEqual({
       kind: "unknown",

@@ -1,4 +1,4 @@
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "../domain/dosMz.js";
+import { mzWindowsHeader, parseDosMzHeader } from "../domain/dosMz.js";
 import {
   GoBinaryFormatFailure,
   GoBinaryReader,
@@ -8,8 +8,8 @@ import {
 } from "./GoBinaryContainer.js";
 
 const peHeaderOffset = (reader: GoBinaryReader): number => {
-  const pe = mzWindowsHeaderOffset(reader.bytes);
-  if (pe === null) {
+  const windowsHeader = mzWindowsHeader(reader.bytes);
+  if (windowsHeader?.kind !== "declared") {
     const dos = parseDosMzHeader(reader.bytes);
     if (!dos.ok) throw new GoBinaryFormatFailure("malformed", dos.error);
     throw new GoBinaryFormatFailure(
@@ -17,6 +17,7 @@ const peHeaderOffset = (reader: GoBinaryReader): number => {
       "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
     );
   }
+  const pe = windowsHeader.offset;
   if (pe < 64)
     throw new GoBinaryFormatFailure(
       "malformed",

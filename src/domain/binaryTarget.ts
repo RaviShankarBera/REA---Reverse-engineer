@@ -4,7 +4,7 @@ import type {
   UniversalMachOSlice,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
+import { mzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
 import { decodePeMachine } from "./peMachine.js";
 
 /** Format and architecture facts recovered from an executable header. */
@@ -62,7 +62,7 @@ export const parseExecutableHeader = (
   )
     return parseElf(bytes, fileSize);
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return parseMz(bytes, fileSize);
+    return parseMzHeader(bytes, fileSize);
   if (bytes.length < 8) return err("truncated or unsupported binary header");
   const magic = bytes.readUInt32BE(0);
   if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
@@ -212,12 +212,14 @@ const parseElf = (
   });
 };
 
-const parseMz = (
+/** Parse MZ metadata while preserving an optional separately observed signature. */
+export const parseMzHeader = (
   bytes: Buffer,
   fileSize: number,
+  windowsHeader = mzWindowsHeader(bytes, fileSize),
 ): Result<ExecutableMetadata, string> => {
-  const offset = mzWindowsHeaderOffset(bytes);
-  if (offset !== null) {
+  if (windowsHeader?.kind === "declared") {
+    const { offset } = windowsHeader;
     if (offset < 64 || offset > bytes.length - 24)
       return err("invalid or truncated Windows executable header in MZ image");
     const signature = bytes.toString("ascii", offset, offset + 2);
@@ -225,7 +227,7 @@ const parseMz = (
       return err(`unsupported ${signature} executable in MZ image`);
     return parsePeRecord(bytes.subarray(offset));
   }
-  const parsed = parseDosMzHeader(bytes, fileSize);
+  const parsed = parseDosMzHeader(bytes, fileSize, windowsHeader);
   return parsed.ok
     ? ok({
         format: "dos-mz",
