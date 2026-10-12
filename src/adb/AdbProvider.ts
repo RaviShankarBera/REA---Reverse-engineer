@@ -31,7 +31,10 @@ import {
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
@@ -49,10 +52,12 @@ import {
   type AdbClientIdentity,
 } from "./AdbConfiguration.js";
 import {
+  displayDevicePath,
   parseAdbDevicesOutput,
   parseGetpropOutput,
   parsePackageListOutput,
   parsePmPathOutput,
+  type AdbPackagePathEntry,
 } from "./AdbDeviceOutput.js";
 import { adbHostFileName } from "./AdbHostFileName.js";
 import {
@@ -351,15 +356,69 @@ const removeOwnedPackageDirectory = async (
   await rm(path, { recursive: true, force: true });
 };
 
+const PM_PATH_REFUSAL_REMEDIATION =
+  "Review details.diagnostics for the refused device paths and details.captured_output for the retained pm path output. REA never renames device-reported APK paths, so repeating the request against the same device state and output filesystem is refused the same way.";
+
+/** The `pm path` listing a package pull refuses, with its retained output. */
+interface PmPathRefusalContext {
+  readonly operation: string;
+  readonly packageName: string;
+  readonly capturedOutput: AnalysisCapturedOutput;
+}
+
+/** `pm path` reported APK paths whose final segment is not a host file name. */
+const unsafePackagePathsError = (
+  { operation, packageName, capturedOutput }: PmPathRefusalContext,
+  rejected: readonly [
+    { readonly device_path: string; readonly reason: string },
+    ...{ readonly device_path: string; readonly reason: string }[],
+  ],
+): AnalysisOutputError => {
+  const [first] = rejected;
+  const others =
+    rejected.length === 1
+      ? ""
+      : ` and ${String(rejected.length - 1)} other path(s)`;
+  return new AnalysisOutputError(operation, "unsafe_device_path", {
+    capturedOutput,
+    userMessage: `pm path for ${packageName} reported an APK path that cannot be written as a file on this host: ${displayDevicePath(first.device_path)} (${first.reason})${others}. No APK was pulled.`,
+    remediationAction: PM_PATH_REFUSAL_REMEDIATION,
+    diagnostics: {
+      package_name: packageName,
+      rejected_paths: rejected.map(({ device_path, reason }) => ({
+        device_path,
+        reason,
+      })),
+    },
+  });
+};
+
+/** Two `pm path` entries name the same file in the package directory. */
+const duplicatePackageDestinationError = (
+  { operation, packageName, capturedOutput }: PmPathRefusalContext,
+  first: AdbPackagePathEntry,
+  second: AdbPackagePathEntry,
+): AnalysisOutputError =>
+  new AnalysisOutputError(operation, "duplicate_local_destination", {
+    capturedOutput,
+    userMessage: `pm path for ${packageName} reported multiple APK paths with the same local file name ${displayDevicePath(first.file_name)}: ${displayDevicePath(first.device_path)} and ${displayDevicePath(second.device_path)}. No APK was pulled.`,
+    remediationAction: PM_PATH_REFUSAL_REMEDIATION,
+    diagnostics: {
+      package_name: packageName,
+      file_name: first.file_name,
+      device_paths: [first.device_path, second.device_path],
+    },
+  });
+
+const systemErrorCode = (cause: unknown): string | null =>
+  cause instanceof Error && "code" in cause && typeof cause.code === "string"
+    ? cause.code
+    : null;
+
 const reservePackageDestinations = async (
-  operation: string,
+  { operation, packageName, capturedOutput }: PmPathRefusalContext,
   packageDirectory: string,
-  entries: readonly { readonly file_name: string }[],
-  capturedOutput: {
-    readonly stdout: string;
-    readonly stderr: string;
-    readonly truncated: boolean;
-  },
+  entries: readonly AdbPackagePathEntry[],
 ): Promise<AnalysisOutputError | undefined> => {
   const reservations: {
     readonly path: string;
@@ -381,10 +440,24 @@ const reservePackageDestinations = async (
         },
       });
     } catch (cause: unknown) {
+      // EEXIST after an exact-name mkdir means the destination filesystem
+      // folds this name onto an earlier entry (case or Unicode aliasing).
+      const errorCode = systemErrorCode(cause);
       return new AnalysisOutputError(
         operation,
-        `Package Manager paths cannot be written to unique local destinations at ${JSON.stringify(entry.file_name)}; refusing before pulling any files`,
-        { cause, capturedOutput },
+        "local_destination_unavailable",
+        {
+          cause,
+          capturedOutput,
+          userMessage: `pm path for ${packageName} reported ${displayDevicePath(entry.device_path)}, whose file name ${displayDevicePath(entry.file_name)} cannot be written to a unique local destination in the output directory (${errorCode ?? "unknown error"}). No APK was pulled.`,
+          remediationAction: PM_PATH_REFUSAL_REMEDIATION,
+          diagnostics: {
+            package_name: packageName,
+            device_path: entry.device_path,
+            file_name: entry.file_name,
+            error_code: errorCode,
+          },
+        },
       );
     }
   }
@@ -1203,13 +1276,15 @@ export class AdbProvider {
       stderr: paths.value.stderr,
       truncated: false,
     };
-    if (parsed.rejectedPaths.length > 0)
+    const refusal: PmPathRefusalContext = {
+      operation,
+      packageName,
+      capturedOutput,
+    };
+    const [firstRejected, ...otherRejected] = parsed.rejectedPaths;
+    if (firstRejected !== undefined)
       return err(
-        new AnalysisOutputError(
-          operation,
-          `Package Manager reported paths that cannot be represented as host files: ${parsed.rejectedPaths.map((entry) => `${JSON.stringify(entry.device_path)} (${entry.reason})`).join(", ")}`,
-          { capturedOutput },
-        ),
+        unsafePackagePathsError(refusal, [firstRejected, ...otherRejected]),
       );
     if (parsed.paths.length === 0 && parsed.unparsedLines.length === 0)
       return err(
@@ -1226,17 +1301,12 @@ export class AdbProvider {
           { capturedOutput },
         ),
       );
-    const destinationNames = new Set<string>();
+    const destinationNames = new Map<string, AdbPackagePathEntry>();
     for (const entry of parsed.paths) {
-      if (destinationNames.has(entry.file_name))
-        return err(
-          new AnalysisOutputError(
-            operation,
-            `Package Manager reported multiple paths with the same local destination ${JSON.stringify(entry.file_name)}; refusing before pulling any files`,
-            { capturedOutput },
-          ),
-        );
-      destinationNames.add(entry.file_name);
+      const earlier = destinationNames.get(entry.file_name);
+      if (earlier !== undefined)
+        return err(duplicatePackageDestinationError(refusal, earlier, entry));
+      destinationNames.set(entry.file_name, entry);
     }
     const directory = await prepareOutputDirectory(
       operation,
@@ -1326,10 +1396,9 @@ export class AdbProvider {
       return err(primary);
     };
     const destinationError = await reservePackageDestinations(
-      operation,
+      refusal,
       packageDirectory,
       parsed.paths,
-      capturedOutput,
     );
     if (destinationError !== undefined)
       return failOwnedPackage(destinationError);

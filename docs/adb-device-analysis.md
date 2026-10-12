@@ -118,6 +118,18 @@ existing analysis families directly, for example
   while POSIX hosts retain valid POSIX filenames such as names with spaces or
   colons. A package pull checks reported names against the destination
   filesystem before pulling, and refuses names that would share a local path.
+- **Package path refusals are diagnosable.** These `pull_adb_package`
+  refusals return `unreadable_output` with `retryable: false`, keep the
+  `pm path` output in `details.captured_output`, and name the refusal in
+  `details.reason`. `unsafe_device_path` lists every refused entry in
+  `details.diagnostics.rejected_paths` as `{device_path, reason}`;
+  `duplicate_local_destination` reports the shared `file_name` and both
+  `device_paths`; `local_destination_unavailable` reports the `device_path`,
+  `file_name`, and the filesystem `error_code` (`EEXIST` when the
+  destination volume folds the name onto an earlier entry). Diagnostics keep
+  raw device strings; the human-readable `message` escapes invisible,
+  bidirectional, and default-ignorable code points as `\u{...}` so rendered
+  text cannot be reordered or hide a character.
 - **Splits are part of the answer.** `pm path` enumerates the base APK and
   every installed split; pulls cover the whole set. System packages whose
   APKs keep other names report the `unknown` role rather than guessing.

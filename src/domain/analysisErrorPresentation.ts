@@ -2,6 +2,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
@@ -102,6 +103,11 @@ export const analysisErrorRemediationAction = (
     return `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`;
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
+  if (
+    error instanceof AnalysisOutputError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
   return analysisErrorUserMessage(error);
