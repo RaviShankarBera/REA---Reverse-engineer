@@ -6,6 +6,7 @@ import type { ElectronActiveObservationPort } from "./ElectronActiveObservationP
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -20,39 +21,88 @@ type CanonicalElectronActiveObservationInput =
     readonly application_root: string;
   };
 
+const PATH_LABELS = {
+  executable_path: "Electron executable",
+  application_path: "Electron application",
+  application_root: "Electron application root",
+} as const;
+
+type ResolvedInputPath =
+  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: false;
+      readonly cause: unknown;
+      readonly issue: AnalysisInputIssue;
+    };
+
+const errorCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+
+/** Resolve one caller path, reporting a failure against its own field. */
+const resolveInputPath = async (
+  field: keyof typeof PATH_LABELS,
+  path: string,
+): Promise<ResolvedInputPath> => {
+  try {
+    return { ok: true, path: await realpath(path) };
+  } catch (cause: unknown) {
+    const code = errorCode(cause);
+    return {
+      ok: false,
+      cause,
+      issue: {
+        path: [field],
+        reason: "invalid_value",
+        message: `${PATH_LABELS[field]} must resolve to an existing path${
+          code === undefined ? "" : ` (${code})`
+        }`,
+      },
+    };
+  }
+};
+
 const canonicalizeInput = async (
   input: ElectronActiveObservationInput,
 ): Promise<Result<CanonicalElectronActiveObservationInput, AnalysisError>> => {
-  try {
-    const [executablePath, applicationPath] = await Promise.all([
-      realpath(input.executable_path),
-      realpath(input.application_path),
-    ]);
-    const applicationRoot =
-      input.application_root === undefined
-        ? dirname(applicationPath)
-        : await realpath(input.application_root);
-    return {
-      ok: true,
-      value: {
-        ...input,
-        executable_path: executablePath,
-        application_path: applicationPath,
-        application_root: applicationRoot,
-      },
-    };
-  } catch (cause: unknown) {
+  const [executable, application, root] = await Promise.all([
+    resolveInputPath("executable_path", input.executable_path),
+    resolveInputPath("application_path", input.application_path),
+    input.application_root === undefined
+      ? undefined
+      : resolveInputPath("application_root", input.application_root),
+  ]);
+  if (!executable.ok || !application.ok || root?.ok === false) {
+    const failures = [executable, application, root].filter(
+      (resolved) => resolved?.ok === false,
+    );
+    const causes = failures.map(({ cause }) => cause);
     return err(
-      new AnalysisInputError(OPERATION, { cause }, [
+      new AnalysisInputError(
+        OPERATION,
         {
-          path: ["application_path"],
-          reason: "invalid_format",
-          message:
-            "Electron executable, application, and root must resolve to existing paths",
+          cause:
+            causes.length === 1
+              ? causes[0]
+              : new AggregateError(causes, "Electron paths did not resolve"),
         },
-      ]),
+        failures.map(({ issue }) => issue),
+      ),
     );
   }
+  return {
+    ok: true,
+    value: {
+      ...input,
+      executable_path: executable.path,
+      application_path: application.path,
+      application_root: root?.path ?? dirname(application.path),
+    },
+  };
 };
 
 /** Canonicalize request paths and execute one provider-owned Electron run. */

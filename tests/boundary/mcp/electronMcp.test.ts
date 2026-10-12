@@ -284,39 +284,10 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   );
   temporary.push(workingDirectory);
   const capturedInputs: unknown[] = [];
-  const activeResult =
-    createElectronActiveObservationFixtureResult(applicationPath);
-  const provider: ElectronActiveObservationPort = {
-    identity: () => ({
-      id: "test-electron-active",
-      name: "Test Electron active provider",
-      version: "1",
-    }),
-    capture: async (input) => {
-      capturedInputs.push(input);
-      return { ok: true, value: activeResult };
-    },
-  };
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(resultOk(null)),
-  }));
-  const server = createServer(
-    { kind: "session", session },
-    {
-      electronActiveObservation: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
+  const client = await connectElectronActiveClient(
+    "electron-active-mcp-test",
+    recordingElectronActiveProvider(applicationPath, capturedInputs),
   );
-  const client = new Client({ name: "electron-active-mcp-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server, session);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   const captured = await client.callTool({
     name: "capture_electron_scenario",
@@ -376,6 +347,89 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       ],
     },
   });
+}, 20_000);
+
+it("reports each unresolvable Electron scenario path on its own field", async () => {
+  const root = await createTestTempDirectory("rea-electron-active-missing-");
+  temporary.push(root);
+  const executablePath = join(root, "electron");
+  const applicationPath = join(root, "main.js");
+  await writeFile(executablePath, "");
+  await writeFile(applicationPath, "module.exports = {};\n");
+  const capturedInputs: unknown[] = [];
+  const client = await connectElectronActiveClient(
+    "electron-active-missing-path-test",
+    recordingElectronActiveProvider(applicationPath, capturedInputs),
+  );
+  const capture = async (paths: Readonly<Record<string, string>>) =>
+    parseMcpToolError(
+      await client.callTool({
+        name: "capture_electron_scenario",
+        arguments: { ...paths, actions: [] },
+      }),
+    );
+
+  expect(
+    await capture({
+      executable_path: join(root, "missing-electron"),
+      application_path: applicationPath,
+    }),
+  ).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["executable_path"],
+            reason: "invalid_value",
+            message:
+              "Electron executable must resolve to an existing path (ENOENT)",
+          },
+        ],
+      },
+    },
+  });
+  expect(
+    await capture({
+      executable_path: executablePath,
+      application_path: applicationPath,
+      application_root: join(root, "missing-root"),
+    }),
+  ).toMatchObject({
+    error: {
+      details: {
+        issues: [
+          {
+            path: ["application_root"],
+            reason: "invalid_value",
+            message:
+              "Electron application root must resolve to an existing path (ENOENT)",
+          },
+        ],
+      },
+    },
+  });
+  expect(
+    await capture({
+      executable_path: join(root, "missing-electron"),
+      application_path: join(root, "missing-app"),
+    }),
+  ).toMatchObject({
+    error: {
+      details: {
+        issues: [
+          { path: ["executable_path"], reason: "invalid_value" },
+          {
+            path: ["application_path"],
+            reason: "invalid_value",
+            message:
+              "Electron application must resolve to an existing path (ENOENT)",
+          },
+        ],
+      },
+    },
+  });
+  expect(capturedInputs).toHaveLength(0);
 }, 20_000);
 
 it("exposes the target-free static JavaScript application workflow", async () => {
@@ -465,4 +519,50 @@ it("exposes the target-free static JavaScript application workflow", async () =>
 
 const evidenceFor = (value: unknown) => {
   return parseEvidence(value);
+};
+
+const recordingElectronActiveProvider = (
+  applicationPath: string,
+  capturedInputs: unknown[],
+): ElectronActiveObservationPort => {
+  const activeResult =
+    createElectronActiveObservationFixtureResult(applicationPath);
+  return {
+    identity: () => ({
+      id: "test-electron-active",
+      name: "Test Electron active provider",
+      version: "1",
+    }),
+    capture: async (input) => {
+      capturedInputs.push(input);
+      return { ok: true, value: activeResult };
+    },
+  };
+};
+
+const connectElectronActiveClient = async (
+  name: string,
+  provider: ElectronActiveObservationPort,
+) => {
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronActiveObservation: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
+  const client = new Client({ name, version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, session);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
 };
