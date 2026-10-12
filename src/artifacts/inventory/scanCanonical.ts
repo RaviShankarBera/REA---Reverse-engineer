@@ -10,6 +10,7 @@ import type { RootInventorySource } from "./classify.js";
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
+  type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
 import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
 import {
@@ -40,7 +41,7 @@ import {
   hashStableRootArtifact,
   hashStableRootArtifactHandle,
 } from "./hashStableRootArtifact.js";
-import { createReader, inventoryLimitations } from "./reader.js";
+import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,
   type PendingIntegrityContradiction,
@@ -99,6 +100,7 @@ export const scanCanonicalArtifactInventoryInScope = async (
       occurrences,
       pendingContradictions,
       caseCollisionLimitation,
+      traversal,
     } = await scanReader(reader, ownedReaders, options.signal, integrity);
     outcome = {
       kind: "completed",
@@ -115,6 +117,7 @@ export const scanCanonicalArtifactInventoryInScope = async (
         occurrences,
         pendingContradictions,
         caseCollisionLimitation,
+        traversal,
       }),
     };
   } catch (cause: unknown) {
@@ -196,6 +199,7 @@ interface SnapshotBuildInput {
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
+  readonly traversal: ArtifactReaderTraversal;
 }
 
 const buildInventorySnapshot = async (
@@ -268,6 +272,7 @@ const buildInventorySnapshot = async (
     orderedOccurrences,
     orderedEdges,
   });
+  const traversal = inventoryCoverage(rootFormat, reader, input.traversal);
   return {
     manifest,
     nodes: orderedNodes,
@@ -275,9 +280,9 @@ const buildInventorySnapshot = async (
     edges: orderedEdges,
     provenance: reader?.provenance() ?? [],
     integrity_contradictions: integrityContradictions,
+    coverage: traversal.coverage,
     limitations: buildLimitations(
-      rootFormat,
-      reader,
+      traversal.limitations,
       integrityContradictions,
       input.caseCollisionLimitation,
     ),
@@ -395,12 +400,11 @@ const buildManifest = ({
   });
 
 const buildLimitations = (
-  rootFormat: ArtifactOccurrence["artifact_format"],
-  reader: ArtifactReader | undefined,
+  scopeLimitations: readonly string[],
   integrityContradictions: readonly IntegrityContradiction[],
   caseCollisionLimitation: string | undefined,
 ): string[] => [
-  ...inventoryLimitations(rootFormat, reader),
+  ...scopeLimitations,
   ...(caseCollisionLimitation === undefined ? [] : [caseCollisionLimitation]),
   ...(integrityContradictions.length === 0
     ? []

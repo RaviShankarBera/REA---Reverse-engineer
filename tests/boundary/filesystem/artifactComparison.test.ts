@@ -233,6 +233,30 @@ describe("artifact comparison completeness", () => {
         evidence_links: citations,
       })),
     });
+    const fragment = leftFragments[0];
+    if (fragment === undefined) throw new Error("Expected inventory fragments");
+    const conflictingScope = createEvidence(
+      {
+        path: leftPath,
+        sha256: left.subject?.digest.sha256 ?? "",
+        format: "directory",
+      },
+      PROVIDER,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: jsonValueSchema.parse({
+          ...artifactInventoryResultSchema.parse(fragment.normalized_result),
+          coverage: { scope: "root", status: "complete" },
+        }),
+      },
+    );
+    expect(() =>
+      compareArtifacts(
+        [conflictingScope, ...leftFragments.slice(1)],
+        rightFragments,
+      ),
+    ).toThrow(/coverage declaration/u);
   }, 15_000);
 
   it("rejects non-inventory and tampered Evidence", async () => {

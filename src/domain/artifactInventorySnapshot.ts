@@ -1,5 +1,6 @@
 import type {
   ArtifactInventoryResult,
+  ArtifactInventoryCoverage,
   ArtifactNode,
   IntegrityContradiction,
 } from "./artifactGraph.js";
@@ -14,5 +15,6 @@ export interface ArtifactInventorySnapshot {
     ArtifactInventoryResult["provenance"][number]
   >;
   readonly integrity_contradictions: readonly IntegrityContradiction[];
+  readonly coverage?: ArtifactInventoryCoverage;
   readonly limitations: readonly string[];
 }

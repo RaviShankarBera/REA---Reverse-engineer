@@ -13,7 +13,6 @@ import {
 } from "./artifactInventoryEvidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
-import { ZIP_NON_ENTRY_TAIL_LIMITATION } from "./zipPackageFormat.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const comparisonStatusSchema = z.enum([
@@ -104,15 +103,26 @@ export const compareArtifacts = (
   const right = parseArtifactInventoryEvidence(rightEvidence);
   const leftComplete = left.inventory.complete;
   const rightComplete = right.inventory.complete;
+  const sameScope =
+    left.inventory.coverage.scope === right.inventory.coverage.scope;
   const leftCovered =
-    leftComplete && !hasCoverageLimitation(left.inventory.limitations);
+    leftComplete && sameScope && left.inventory.coverage.status === "complete";
   const rightCovered =
-    rightComplete && !hasCoverageLimitation(right.inventory.limitations);
+    rightComplete &&
+    sameScope &&
+    right.inventory.coverage.status === "complete";
   const limitations = [
     ...left.inventory.limitations.map((item) => `Left: ${item}`),
     ...right.inventory.limitations.map((item) => `Right: ${item}`),
     ...(leftComplete ? [] : ["Left artifact inventory is incomplete."]),
     ...(rightComplete ? [] : ["Right artifact inventory is incomplete."]),
+    ...(sameScope ? [] : ["Artifact inventory scopes differ."]),
+    ...(left.inventory.coverage.status === "complete"
+      ? []
+      : ["Left artifact inventory traversal coverage is unknown."]),
+    ...(right.inventory.coverage.status === "complete"
+      ? []
+      : ["Right artifact inventory traversal coverage is unknown."]),
   ];
   const changes = compareOccurrences(
     left.inventory,
@@ -432,13 +442,6 @@ const summarize = (
         ),
   };
 };
-
-const hasCoverageLimitation = (limitations: readonly string[]): boolean =>
-  limitations.some(
-    (limitation) =>
-      limitation !== ZIP_NON_ENTRY_TAIL_LIMITATION &&
-      !/integrity contradiction\(s\) were recorded/u.test(limitation),
-  );
 
 // Differing manifest root digests prove a root content change even when node
 // details are unavailable. Fold that fact into an existing root row so one

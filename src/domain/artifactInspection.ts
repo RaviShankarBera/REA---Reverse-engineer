@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   artifactInventoryResultSchema,
+  artifactInventoryOutputSchema,
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -114,7 +115,7 @@ export const artifactInspectionOutputSchema =
       .array(
         artifactInspectionResultSchema.shape.substeps.element.safeExtend({
           evidence: evidenceSchema.safeExtend({
-            normalized_result: artifactInventoryResultSchema,
+            normalized_result: artifactInventoryOutputSchema,
           }),
         }),
       )
