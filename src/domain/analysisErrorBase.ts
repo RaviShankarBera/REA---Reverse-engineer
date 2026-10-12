@@ -106,6 +106,7 @@ import type { AndroidPartialObservation } from "./android/androidPartialObservat
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
   AdbAcquiredFilePartialObservation,
+  AdbActivityStartPartialObservation,
   AdbPackagePullPartialObservation,
 } from "./adb/adbDeviceAnalysis.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -127,4 +128,5 @@ export type AnalysisPartialObservation =
   | FirmwarePartialObservation
   | NativeUiObservationResult
   | AdbAcquiredFilePartialObservation
+  | AdbActivityStartPartialObservation
   | AdbPackagePullPartialObservation;

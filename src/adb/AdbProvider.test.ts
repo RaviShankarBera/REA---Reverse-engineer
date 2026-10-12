@@ -991,7 +991,7 @@ it("starts an app through resolved launcher component and force-stops it", async
       "cmd:package":
         "priority=0 preferredOrder=0 match=0x00108000 specificIndex=-1 isDefault=true\ncom.example/.Main",
       "am:start":
-        "Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.example/.Main }\n",
+        "Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.example/.Main }\nStatus: ok\nActivity: com.example/.Main\nTotalTime: 314\nWaitTime: 315\nComplete\n",
       "am:force-stop": "",
     }),
   );
@@ -1003,6 +1003,8 @@ it("starts an app through resolved launcher component and force-stops it", async
   expect(started).toMatchObject({
     package_name: "com.example",
     component: "com.example/.Main",
+    reported_activity: "com.example/.Main",
+    reported_status: "ok",
     started_activity: expect.stringContaining(
       "cmp=com.example/.Main",
     ) as unknown,
@@ -1012,6 +1014,79 @@ it("starts an app through resolved launcher component and force-stops it", async
     input: { serial: "emulator-5554", package: "com.example" },
   });
   expect(stopped.package_name).toBe("com.example");
+});
+
+it.each(["start_adb_app", "start_adb_activity"] as const)(
+  "returns a failure with launch-attempt facts for %s device timeout",
+  async (operation) => {
+    const stdout =
+      "Starting: Intent { act=android.intent.action.MAIN cmp=com.example/.Main }\nStatus: timeout\nActivity: com.example/.Main\nWaitTime: 10004\nComplete\n";
+    const { binary } = await writeAdbStub(
+      shellStub({
+        "cmd:package": "com.example/.Main\n",
+        "am:start": stdout,
+      }),
+    );
+    const projected = await refusedBy(
+      providerOver(binary),
+      operation === "start_adb_app"
+        ? {
+            operation,
+            input: { serial: "emulator-5554", package: "com.example" },
+          }
+        : {
+            operation,
+            input: {
+              serial: "emulator-5554",
+              action: "android.intent.action.MAIN",
+              extras: [],
+            },
+          },
+    );
+    expect(projected).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        captured_output: { stdout, stderr: "", truncated: false },
+        partial_observation: {
+          provider_id: "adb",
+          operation,
+          result: {
+            started_activity:
+              "act=android.intent.action.MAIN cmp=com.example/.Main",
+            reported_activity: "com.example/.Main",
+            reported_status: "timeout",
+          },
+        },
+      },
+    });
+    expect(projected.message).toContain("status: timeout");
+  },
+);
+
+it("does not accept a Starting line followed by a hard activity error", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "am:start":
+        "Starting: Intent { cmp=com.example/.Absent }\nError: Activity class does not exist\n",
+    }),
+  );
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "start_adb_activity",
+    input: {
+      serial: "emulator-5554",
+      action: "android.intent.action.MAIN",
+      extras: [],
+    },
+  });
+  expect(projected.message).toContain("Activity class does not exist");
+  expect(projected.details).toMatchObject({
+    partial_observation: {
+      result: {
+        started_activity: "cmp=com.example/.Absent",
+        reported_status: null,
+      },
+    },
+  });
 });
 
 it("reports an app without a launcher activity as unsupported", async () => {

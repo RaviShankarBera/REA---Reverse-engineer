@@ -20,7 +20,10 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
-import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
+import {
+  adbResultSchemas,
+  type AdbRequest,
+} from "../domain/adb/adbDeviceAnalysis.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
@@ -1945,28 +1948,46 @@ export class AdbProvider {
       signal,
     );
     if (!started.ok) return started;
-    const verdict = parseAmStartOutput(started.value.stdout);
-    if (verdict.status === "refused")
+    const verdict = parseAmStartOutput(
+      started.value.stdout,
+      started.value.stderr,
+    );
+    const result = {
+      ...resultFields,
+      started_activity: verdict.startedActivity,
+      reported_activity: verdict.activity,
+      reported_status: verdict.reportedStatus,
+    };
+    if (verdict.status !== "started")
       return err(
         new AnalysisUnsupportedTargetError(
           operation,
           serial,
           verdict.reason ?? "am start refused the intent",
+          {
+            capturedOutput: { ...started.value, truncated: false },
+            partialObservation:
+              operation === "start_adb_app"
+                ? {
+                    provider_id: "adb",
+                    operation,
+                    result: adbResultSchemas.start_adb_app.parse(result),
+                  }
+                : {
+                    provider_id: "adb",
+                    operation,
+                    result: adbResultSchemas.start_adb_activity.parse(result),
+                  },
+          },
         ),
       );
     return ok(
-      createAnalysisExecution(
-        {
-          ...resultFields,
-          started_activity: verdict.startedActivity,
-        },
-        provider,
-        {
-          limitations: [
-            "Starting an activity changes device state; am start -W waits for launch completion but no lifecycle observation is captured",
-          ],
-        },
-      ) as AnalysisExecution,
+      createAnalysisExecution(result, provider, {
+        rawResult: started.value,
+        limitations: [
+          "Starting an activity changes device state; am start -W waits for launch completion but no lifecycle observation is captured",
+        ],
+      }) as AnalysisExecution,
     );
   }
 

@@ -341,7 +341,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "start_adb_activity",
     ...toolContractMetadata("start_adb_activity"),
     description:
-      "Start an intent with `am start`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; the activity manager's Starting/Error verdict is preserved verbatim.",
+      "Start an intent with `am start -W`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; launch attempts, reported Activity/Status and command output are retained. Device-reported timeout and errors return failures with partial observations rather than successful launch evidence.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.start_adb_activity,
     outputSchema: evidenceResultOf(adbResultSchemas.start_adb_activity),
