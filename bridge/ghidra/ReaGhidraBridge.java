@@ -52,6 +52,8 @@ import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
+import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
@@ -443,6 +445,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 .toArray(String[]::new)
         ));
         result.add("target", target);
+        result.add("pdb", pdbObservation());
         JsonArray extensions = analysisExtensions.reports();
         if (extensions.size() > 0) result.add("analysis_extensions", extensions);
         // Written by ReaGhidraApplySeeds before auto-analysis; REA checks it
@@ -456,6 +459,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
             .getString("REA MIPS soft-float storage", null);
         if (softFloat != null) result.add("mips_soft_float_storage", JsonParser.parseString(softFloat));
         return result;
+    }
+
+    /** Read loader/analyzer-owned facts without searching for or applying companions. */
+    private JsonObject pdbObservation() {
+        Options info = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        JsonObject pdb = new JsonObject();
+        pdb.addProperty("file", info.getString(PdbParserConstants.PDB_FILE, null));
+        pdb.addProperty("guid", info.getString(PdbParserConstants.PDB_GUID, null));
+        pdb.addProperty("age", info.getString(PdbParserConstants.PDB_AGE, null));
+        pdb.addProperty("signature", info.getString(PdbParserConstants.PDB_SIGNATURE, null));
+        pdb.addProperty("version", info.getString(PdbParserConstants.PDB_VERSION, null));
+        if (info.contains(PdbParserConstants.PDB_LOADED))
+            pdb.addProperty("loaded", info.getBoolean(PdbParserConstants.PDB_LOADED, false));
+        else
+            pdb.add("loaded", JsonNull.INSTANCE);
+        return pdb;
     }
 
     private static String bytesHex(byte[] bytes) {

@@ -41,6 +41,18 @@ const sessionInfoSchema = z
     read_only: z.boolean(),
     analysis_complete: z.boolean(),
     analysis_timed_out: z.boolean(),
+    /** Program Information attributes; absent load state remains unknown. */
+    pdb: z
+      .strictObject({
+        file: z.string().nullable(),
+        guid: z.string().nullable(),
+        /** Ghidra stores CodeView age as a hexadecimal string. */
+        age: z.string().nullable(),
+        signature: z.string().nullable(),
+        version: z.string().nullable(),
+        loaded: z.boolean().nullable(),
+      })
+      .optional(),
     analysis_extensions: z.array(ghidraExtensionResultSchema).optional(),
     analysis_seeds: ghidraSeedReportSchema.optional(),
     mips_soft_float_storage: z
@@ -67,6 +79,27 @@ const sessionInfoSchema = z
 
 /** Authenticated metadata produced after Ghidra finishes auto-analysis. */
 export type GhidraSessionInfo = z.infer<typeof sessionInfoSchema>;
+
+/** Describe missing PDB authority without claiming all names are generated. */
+export const ghidraPdbLimitations = (
+  pdb: GhidraSessionInfo["pdb"],
+): readonly string[] => {
+  if (pdb === undefined)
+    return [
+      "Ghidra did not report PDB attributes; debug-symbol coverage is unknown.",
+    ];
+  if (
+    pdb.loaded === true ||
+    [pdb.file, pdb.guid, pdb.age, pdb.signature, pdb.version].every(
+      (value) => value === null,
+    )
+  )
+    return [];
+  const state = pdb.loaded === false ? "not loaded" : "load state unknown";
+  return [
+    `The target references PDB ${pdb.file ?? "(file unknown)"} (GUID ${pdb.guid ?? "unknown"}, age (hex) ${pdb.age ?? "unknown"}, signature ${pdb.signature ?? "unknown"}, version ${pdb.version ?? "unknown"}); Ghidra reports ${state}. Original names and types may be missing; an empty name search does not prove a procedure is absent. Use list_procedures and address-based analysis to inspect recovered functions. REA does not admit a caller-selected PDB companion.`,
+  ];
+};
 
 /** Require exact run, provider, and profile identity from the Java bridge. */
 export const parseGhidraSessionInfo = (

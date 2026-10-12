@@ -41,6 +41,23 @@ does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
 
+## PE debug-symbol coverage
+
+The post-analysis handshake reports Ghidra's PDB Program Information attributes:
+the referenced file, GUID, hexadecimal age, legacy signature, version, and
+`PDB Loaded` state. Absent attributes remain null. PE Evidence carries a
+limitation when a PDB reference is present but Ghidra reports it as not loaded,
+or its load state is unknown. A bridge without this report leaves PDB coverage
+unknown. A reported loaded state is a Ghidra observation, not an independent
+PDB identity or complete symbol-coverage attestation.
+
+Original names and types may be missing even when auto-analysis completes.
+An empty name search does not establish that a function is absent; use
+`list_procedures` and address-based analysis to inspect recovered functions.
+REA imports a private executable copy and does not admit a caller-selected
+PDB companion. This reporting does not search symbol servers, copy a sibling
+PDB, or change analyzer settings.
+
 ## Admitted function-analysis semantics
 
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
