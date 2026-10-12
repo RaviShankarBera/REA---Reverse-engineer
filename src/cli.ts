@@ -41,7 +41,7 @@ import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
 import {
-  streamCliCommandResults,
+  projectCliCommandResults,
   type CliResultOutput,
 } from "./cli/streamedJsonOutput.js";
 
@@ -121,6 +121,6 @@ export const createCli = (
   registerJavaScriptRuntimeObservationCommands(cli, logger);
   registerApplicationCommands(cli, logger);
   presentOmittableDefaults(cli);
-  if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
+  projectCliCommandResults(cli, resultOutput);
   return cli;
 };

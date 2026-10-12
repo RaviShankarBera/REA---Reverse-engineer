@@ -12,6 +12,12 @@ import type { Logger } from "pino";
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** Carry the command owner's failure decision without changing its public payload. */
+export class CliCommandFailure<Value = unknown> {
+  readonly failed = true;
+  constructor(readonly value: Value) {}
+}
+
 /** Identify caller-visible CLI outcomes that mean the requested operation failed. */
 export const isCliOperationFailure = (value: unknown): boolean => {
   if (!isRecord(value)) return false;
@@ -32,7 +38,7 @@ export const logCliCommand = async <Value>(
   command: string,
   execute: () => Promise<Value>,
   isCommandFailure?: (value: Value) => boolean,
-): Promise<Value | AnalysisErrorProjection> => {
+): Promise<Value | CliCommandFailure<Value | AnalysisErrorProjection>> => {
   const startedAt = performance.now();
   try {
     const value = await execute();
@@ -45,7 +51,10 @@ export const logCliCommand = async <Value>(
       },
       failed ? "CLI command failed" : "CLI command completed",
     );
-    if (failed) process.exitCode = 1;
+    if (failed) {
+      process.exitCode = 1;
+      return new CliCommandFailure(value);
+    }
     return value;
   } catch (cause: unknown) {
     process.exitCode = 1;
@@ -59,7 +68,7 @@ export const logCliCommand = async <Value>(
     );
     if (cause instanceof AnalysisError) {
       process.exitCode = 1;
-      return projectAnalysisError(cause);
+      return new CliCommandFailure(projectAnalysisError(cause));
     }
     throw cause;
   }

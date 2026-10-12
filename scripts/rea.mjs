@@ -60,7 +60,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
 } else {
   const { cliConfigurationError, createCli } =
     await import("../dist/cli-runtime/cli.js");
-  const { createStreamedCliJsonOutput } =
+  const { createCliResultOutput } =
     await import("../dist/cli-runtime/streamedJsonOutput.js");
   const {
     renderCliOutputArgumentError,
@@ -77,7 +77,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     process.exitCode = 1;
   } else {
     let wroteOutput = false;
-    const resultOutput = createStreamedCliJsonOutput(args, process.stdout);
+    const resultOutput = createCliResultOutput(args, process.stdout);
     await createCli(process.env, resultOutput).serve(args, {
       stdout: (output) => {
         if (resultOutput?.handled) {

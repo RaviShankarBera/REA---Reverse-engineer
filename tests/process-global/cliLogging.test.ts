@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { logCliCommand } from "../../src/cliLogging.js";
+import { CliCommandFailure, logCliCommand } from "../../src/cliLogging.js";
 import { silentLogger } from "../../src/logger.js";
 import { ArtifactOperationError } from "../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -60,11 +60,12 @@ describe("CLI operation status", () => {
       ),
     };
 
-    await expect(
-      logCliCommand(silentLogger, "inspect-artifact", () =>
-        Promise.resolve(output),
-      ),
-    ).resolves.toBe(output);
+    const result = await logCliCommand(silentLogger, "inspect-artifact", () =>
+      Promise.resolve(output),
+    );
+    if (!(result instanceof CliCommandFailure))
+      throw new Error("Expected a failed CLI command");
+    expect(result.value).toBe(output);
     expect(process.exitCode).toBe(1);
   });
 });

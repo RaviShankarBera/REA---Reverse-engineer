@@ -1,15 +1,20 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Cli, Filter } from "incur";
+import { Cli, Filter, Formatter } from "incur";
 
 import { parseCliOutputArguments } from "../cliOutput.js";
+import { CliCommandFailure } from "../cliLogging.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
-import { jsonOutputParts, writeJsonOutput } from "./jsonOutput.js";
+import {
+  jsonOutputParts,
+  writeCliOutputPart,
+  writeJsonOutput,
+} from "./jsonOutput.js";
 import type { CliInstance } from "./types.js";
 
 /** Result metadata supplied by the command that actually ran. */
@@ -17,6 +22,7 @@ export interface CliResultOutputMetadata {
   readonly command: string;
   readonly duration: string;
   readonly format: string;
+  readonly operationFailed: boolean;
 }
 
 /** Optional executable-owned result surface for one CLI invocation. */
@@ -34,10 +40,10 @@ type CommandDefinition = Extract<
 >;
 const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
 
-/** Install formatting once, after registration, for every ordinary CLI result. */
-export const streamCliCommandResults = (
+/** Project command-owned outcomes once, with optional executable-owned output. */
+export const projectCliCommandResults = (
   cli: CliInstance,
-  output: CliResultOutput,
+  output?: CliResultOutput,
 ): void => {
   const commands = registeredCommands.get(cli);
   if (commands !== undefined) wrapCommands(commands, [], output);
@@ -46,7 +52,7 @@ export const streamCliCommandResults = (
 const wrapCommands = (
   commands: CommandMap,
   parents: readonly string[],
-  output: CliResultOutput,
+  output: CliResultOutput | undefined,
 ): void => {
   for (const [name, entry] of commands) {
     const path = [...parents, name];
@@ -62,7 +68,7 @@ const wrapCommands = (
 const wrapCommand = (
   command: Pick<CommandDefinition, "run">,
   name: string,
-  output: CliResultOutput,
+  output: CliResultOutput | undefined,
 ): void => {
   const run = command.run;
   command.run = (context) => {
@@ -75,7 +81,9 @@ const wrapCommand = (
       Symbol.asyncIterator in result
     )
       return result;
-    return Promise.resolve(result).then(async (value: unknown) => {
+    return Promise.resolve(result).then(async (outcome: unknown) => {
+      const operationFailed = outcome instanceof CliCommandFailure;
+      const value = operationFailed ? outcome.value : outcome;
       if (
         typeof value === "object" &&
         value !== null &&
@@ -83,10 +91,12 @@ const wrapCommand = (
       )
         return value;
       if (
+        output === undefined ||
         !(await output.write(value, {
           command: name,
           format: context.format,
           duration: `${Math.round(performance.now() - started)}ms`,
+          operationFailed,
         }))
       )
         return value;
@@ -100,16 +110,21 @@ const wrapCommand = (
   };
 };
 
-/** Preserve Incur's JSON controls while streaming the complete result. */
-export const createStreamedCliJsonOutput = (
+/** Stream JSON and preserve command failures through the full-output formatters. */
+export const createCliResultOutput = (
   arguments_: readonly string[],
   destination: Writable,
 ): CliResultOutput | undefined => {
   const options = parseCliOutputArguments(arguments_);
   if (
     options.parseError ||
-    options.tokenWindow ||
-    (options.format !== "json" && options.format !== "jsonl")
+    (options.tokenWindow &&
+      (options.format === "json" ||
+        options.format === "jsonl" ||
+        options.format === "yaml")) ||
+    (options.format !== "json" &&
+      options.format !== "jsonl" &&
+      (!options.fullOutput || options.tokenCount))
   )
     return undefined;
   const format = options.format;
@@ -128,14 +143,23 @@ export const createStreamedCliJsonOutput = (
     },
     async write(value, metadata) {
       if (metadata.format !== format) return false;
+      const json = format === "json" || format === "jsonl";
+      if (!json && !metadata.operationFailed) return false;
       const filtered: unknown = options.filterOutput
         ? Filter.apply(value, Filter.parse(options.filterOutput))
         : value;
+      const window =
+        !json && options.tokenWindow
+          ? await failureTokenWindow(filtered, options)
+          : undefined;
       const meta = {
         command: metadata.command,
         duration: metadata.duration,
+        ...(window?.nextOffset === undefined
+          ? {}
+          : { nextOffset: window.nextOffset }),
       };
-      if (options.tokenCount) {
+      if (options.tokenCount && json) {
         // Incur/tokenx materialize the formatted value. Measure its UTF-16
         // expansion before allowing that allocation, independently of UTF-8 bytes.
         let characters = 0;
@@ -166,9 +190,15 @@ export const createStreamedCliJsonOutput = (
         );
       }
       const document = options.fullOutput
-        ? filtered === undefined
-          ? { ok: true, meta }
-          : { ok: true, data: filtered, meta }
+        ? metadata.operationFailed
+          ? {
+              ok: false,
+              error: window?.text ?? (filtered === undefined ? {} : filtered),
+              meta,
+            }
+          : filtered === undefined
+            ? { ok: true, meta }
+            : { ok: true, data: filtered, meta }
         : filtered === undefined ||
             filtered === null ||
             typeof filtered === "function" ||
@@ -179,20 +209,42 @@ export const createStreamedCliJsonOutput = (
       // document from Incur's error formatter.
       handled = true;
       try {
-        await writeJsonOutput(
+        const rendered =
           error === undefined
             ? document
             : options.fullOutput
               ? { ok: false, error, meta }
-              : error,
-          destination,
-          format,
-        );
+              : error;
+        if (json) await writeJsonOutput(rendered, destination, format);
+        else
+          await writeCliOutputPart(
+            destination,
+            `${Formatter.format(rendered, format)}\n`,
+          );
       } catch (cause: unknown) {
         failed = true;
         throw cause;
       }
       return true;
     },
+  };
+};
+
+/** Match Incur's text windows while keeping the failure envelope and metadata intact. */
+const failureTokenWindow = async (
+  value: unknown,
+  options: ReturnType<typeof parseCliOutputArguments>,
+): Promise<{ text: string; nextOffset: number | undefined } | undefined> => {
+  const { estimateTokenCount, sliceByTokens } = await import("tokenx");
+  const formatted = Formatter.format(value, options.format);
+  const total = estimateTokenCount(formatted);
+  const offset = options.tokenOffset ?? 0;
+  const end =
+    options.tokenLimit === undefined ? total : offset + options.tokenLimit;
+  if (offset === 0 && end >= total) return undefined;
+  const actualEnd = Math.min(end, total);
+  return {
+    text: `${sliceByTokens(formatted, offset, end)}\n[truncated: showing tokens ${offset}–${actualEnd} of ${total}]`,
+    nextOffset: actualEnd < total ? actualEnd : undefined,
   };
 };

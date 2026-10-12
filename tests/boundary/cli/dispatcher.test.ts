@@ -33,7 +33,7 @@ describe("executable dispatcher", () => {
         ),
         workspace.write(
           "dist/cli-runtime/streamedJsonOutput.js",
-          "export const createStreamedCliJsonOutput = () => undefined;\n",
+          "export const createCliResultOutput = () => undefined;\n",
         ),
         workspace.write(
           "dist/cli-runtime/mcpDoctor.js",

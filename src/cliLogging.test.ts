@@ -66,7 +66,7 @@ describe("CLI command outcome classification", () => {
       async () => result,
       isUpdateFailure,
     );
-    expect(output).toBe(result);
+    expect(output).toMatchObject({ value: result, failed: true });
     expect(process.exitCode).toBe(1);
     process.exitCode = previousExitCode;
   });
@@ -96,7 +96,7 @@ describe("CLI command outcome classification", () => {
         async () => setup,
         isSetupFailure,
       );
-      expect(output).toBe(setup);
+      expect(output).toMatchObject({ value: setup, failed: true });
       expect(process.exitCode).toBe(1);
       process.exitCode = previousExitCode;
     },
@@ -147,12 +147,15 @@ describe("CLI thrown analysis failures", () => {
         },
       );
       expect(projected).toMatchObject({
-        code: "artifact_integrity_mismatch",
-        category: "integrity_mismatch",
-        details: {
-          logical_path: "src/main.js",
-          declared_sha256: "a".repeat(64),
-          calculated_sha256: "b".repeat(64),
+        failed: true,
+        value: {
+          code: "artifact_integrity_mismatch",
+          category: "integrity_mismatch",
+          details: {
+            logical_path: "src/main.js",
+            declared_sha256: "a".repeat(64),
+            calculated_sha256: "b".repeat(64),
+          },
         },
       });
     } finally {

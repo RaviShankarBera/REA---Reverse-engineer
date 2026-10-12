@@ -2,7 +2,7 @@ import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { parseCliJsonInput } from "../../src/cliJsonInput.js";
-import { logCliCommand } from "../../src/cliLogging.js";
+import { CliCommandFailure, logCliCommand } from "../../src/cliLogging.js";
 
 const originalExitCode = process.exitCode;
 
@@ -25,8 +25,10 @@ describe("CLI JSON input logging status", () => {
 
     const output = await logCliCommand(logger, "test-input", async () => value);
 
-    expect(output).toBe(value);
-    expect(JSON.stringify(output)).toBe(serialized);
+    if (!(output instanceof CliCommandFailure))
+      throw new Error("Expected a failed CLI command");
+    expect(output.value).toBe(value);
+    expect(JSON.stringify(output.value)).toBe(serialized);
     expect(process.exitCode).toBe(1);
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines.join(""))).toMatchObject({

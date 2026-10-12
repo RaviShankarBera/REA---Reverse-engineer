@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
 import {
-  createStreamedCliJsonOutput,
-  streamCliCommandResults,
+  createCliResultOutput,
+  projectCliCommandResults,
 } from "../../../src/cli/streamedJsonOutput.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -164,9 +164,7 @@ describe("streamed CLI result surface", () => {
     ["--json", "--token-limit", "5"],
     ["--json", "--format", "invalid"],
   ])("delegates unsupported output controls %j", (...arguments_) => {
-    expect(createStreamedCliJsonOutput(arguments_, new Writable())).toBe(
-      undefined,
-    );
+    expect(createCliResultOutput(arguments_, new Writable())).toBe(undefined);
   });
 
   it("keeps ownership after a failed write so no second document is emitted", async () => {
@@ -176,12 +174,17 @@ describe("streamed CLI result surface", () => {
         callback(cause);
       },
     });
-    const output = createStreamedCliJsonOutput(["--json"], destination);
+    const output = createCliResultOutput(["--json"], destination);
     if (output === undefined) throw new Error("Missing JSON output surface");
     await expect(
       output.write(
         { result: "small" },
-        { command: "fixture", duration: "1ms", format: "json" },
+        {
+          command: "fixture",
+          duration: "1ms",
+          format: "json",
+          operationFailed: false,
+        },
       ),
     ).rejects.toBe(cause);
     expect(output.handled).toBe(true);
@@ -228,9 +231,9 @@ describe("streamed CLI result surface", () => {
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
     const argv = ["inspect-managed-members", "fixture.dll", "--json"];
-    const output = createStreamedCliJsonOutput(argv, destination);
+    const output = createCliResultOutput(argv, destination);
     if (output === undefined) throw new Error("Missing JSON output surface");
-    streamCliCommandResults(cli, output);
+    projectCliCommandResults(cli, output);
     let exitCode = 0;
     let fallbackBytes = 0;
     await cli.serve(argv, {
@@ -248,7 +251,7 @@ describe("streamed CLI result surface", () => {
 
     const chunks: Buffer[] = [];
     const tokenArgv = [...argv, "--token-count", "--full-output"];
-    const tokenOutput = createStreamedCliJsonOutput(
+    const tokenOutput = createCliResultOutput(
       tokenArgv,
       new Writable({
         write(chunk: Buffer, _encoding, callback) {
@@ -261,7 +264,7 @@ describe("streamed CLI result surface", () => {
       throw new Error("Missing token-count output surface");
     const tokenCli = Cli.create("rea-output-test", { sync: false });
     registerManagedCommands(tokenCli, silentLogger, async () => value);
-    streamCliCommandResults(tokenCli, tokenOutput);
+    projectCliCommandResults(tokenCli, tokenOutput);
     await tokenCli.serve(tokenArgv, {
       stdout: (text) => {
         if (!tokenOutput.handled) fallbackBytes += text.length;

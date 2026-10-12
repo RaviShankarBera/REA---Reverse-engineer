@@ -1,7 +1,7 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { expect, it } from "vitest";
 
-import { logCliCommand } from "../../../src/cliLogging.js";
+import { CliCommandFailure, logCliCommand } from "../../../src/cliLogging.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
 import { bindGhidraSessionFailure } from "../../../src/ghidra/GhidraSessionError.js";
@@ -42,7 +42,9 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
       return result.value.result;
     });
     expect(process.exitCode).toBe(1);
-    const parsed = analysisErrorProjectionSchema.parse(cli);
+    if (!(cli instanceof CliCommandFailure))
+      throw new Error("Expected a failed CLI command");
+    const parsed = analysisErrorProjectionSchema.parse(cli.value);
     expect(parsed).toMatchObject({
       code: "execution_failure",
       details: {
