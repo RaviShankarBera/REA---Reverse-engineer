@@ -8,23 +8,31 @@ export const HAR_CAPTURE_PROVIDER_IDENTITY = {
   version: "har-schema@2.0.0;jsonc-parser@3.3.1;lossless-json@4.3.1",
 } as const;
 
-/** Fixed V8 heap settings used by the owned HAR decoder process. */
-export const HAR_CAPTURE_HEAP_LIMITS = {
+/** Fixed V8 heap settings used by the owned JSON capture decoder process. */
+export const JSON_CAPTURE_HEAP_LIMITS = {
   oldGenerationMiB: 192,
   semiSpaceMiB: 8,
 } as const;
 
-/** The HAR decoder runs on this executable; Bun accepts but ignores V8 heap flags. */
-export const HAR_CAPTURE_HEAP_ENFORCED =
+/** JSON capture decoders runs on this executable; Bun accepts but ignores V8 heap flags. */
+export const JSON_CAPTURE_HEAP_ENFORCED =
   javaScriptRuntime(process.versions).id === "node";
 
 /** Windows Job Object commit limit replacing the ignored heap flags under Bun; otherwise null. */
-export const HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES =
-  javaScriptWorkerMemoryLimitBytes(HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB);
+export const JSON_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES =
+  javaScriptWorkerMemoryLimitBytes(JSON_CAPTURE_HEAP_LIMITS.oldGenerationMiB);
 
 /** Native executable profile verified with unchanged mitmproxy raw-state decoding. */
 export const MITMPROXY_CAPTURE_PROVIDER_IDENTITY = {
   id: "mitmproxy-native-tnetstring",
   name: "REA offline native mitmproxy adapter",
   version: "12.2.3",
+} as const;
+
+/** Fixed offline interpretation profile, not an authenticated producer claim. */
+export const QLOG_CAPTURE_PROVIDER_IDENTITY = {
+  id: "aioquic-qlog-json",
+  name: "REA aioquic qlog capture adapter",
+  version:
+    "aioquic-profile@1.5.0;qlog@0.3;jsonc-parser@3.3.1;lossless-json@4.3.1",
 } as const;

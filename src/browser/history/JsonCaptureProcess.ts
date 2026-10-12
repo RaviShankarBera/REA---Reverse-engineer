@@ -3,7 +3,9 @@ import { z } from "zod";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { decodeHarCapture, decodeHarText } from "./HarCapture.js";
+import { decodeQlogCapture } from "./QlogCapture.js";
+import { decodeHarCapture } from "./HarCapture.js";
+import { decodeCaptureText } from "./CaptureJson.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -11,11 +13,13 @@ const requestSchema = z.strictObject({
   sensitive_values: z.array(z.string().min(1)),
 });
 
-/** Decode untrusted HAR in an owned, bounded heap rather than the long-lived MCP process. */
+/** Decode untrusted JSON captures in an owned heap rather than the long-lived MCP process. */
 const main = async (): Promise<void> => {
   const request = requestSchema.parse(
     JSON.parse(await readFile(process.argv[2] ?? "", "utf8")),
   );
+  const format = z.enum(["har", "qlog"]).parse(process.argv[3]);
+  const decoder = format === "har" ? decodeHarCapture : decodeQlogCapture;
   let reply: unknown;
   try {
     const snapshot = await readStableArtifact(
@@ -24,8 +28,8 @@ const main = async (): Promise<void> => {
     );
     reply = {
       ok: true,
-      value: decodeHarCapture(
-        decodeHarText(snapshot.bytes),
+      value: decoder(
+        decodeCaptureText(snapshot.bytes, format === "har" ? "HAR" : "qlog"),
         request.sensitive_values,
       ),
     };
@@ -41,7 +45,7 @@ const main = async (): Promise<void> => {
         : {
             ok: false,
             reason: "decoder",
-            message: `HAR decoder failed unexpectedly (${cause instanceof Error ? cause.name : "unknown exception"}).`,
+            message: `${format} decoder failed unexpectedly (${cause instanceof Error ? cause.name : "unknown exception"}).`,
             pointer: "",
           };
   }
@@ -50,7 +54,7 @@ const main = async (): Promise<void> => {
     text = JSON.stringify({
       ok: false,
       reason: "limit",
-      message: "HAR reply exceeds the complete-evidence output budget.",
+      message: `${format} reply exceeds the complete-evidence output budget.`,
       pointer: "",
     });
   await writeFile(request.reply_path, text, { flag: "wx", mode: 0o600 });

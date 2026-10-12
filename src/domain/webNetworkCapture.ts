@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { jsonValueSchema } from "./jsonValue.js";
 import { localPathStringSchema } from "./localPath.js";
+import { qlogCaptureFactsSchema } from "./qlogCapture.js";
 
 /** Complete historical evidence budgets; exceeding a budget returns no partial capture. */
 export const WEB_NETWORK_CAPTURE_LIMITS = {
@@ -13,9 +14,9 @@ export const WEB_NETWORK_CAPTURE_LIMITS = {
 /** Inspect an explicit retained capture without contacting its recorded destinations. */
 export const inspectWebNetworkCaptureInputSchema = z.strictObject({
   capture_path: localPathStringSchema.describe(
-    "Absolute local HAR or mitmproxy capture path.",
+    "Absolute local HAR, mitmproxy or aioquic qlog capture path.",
   ),
-  format: z.enum(["har", "mitmproxy"]),
+  format: z.enum(["har", "mitmproxy", "qlog"]),
   record_ordinals: z
     .array(z.number().int().nonnegative())
     .min(1)
@@ -97,69 +98,80 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-/** Decoded records retain unique producer ordinals within their declared coverage. */
-export const webNetworkCapturePayloadSchema = z
-  .strictObject({
-    decoder: z.strictObject({
-      id: z.string().min(1),
-      name: z.string().min(1),
-      version: z.string().min(1),
-    }),
-    container: z.strictObject({
-      reported: jsonValueSchema,
-      numeric_literals: z.array(numberSchema),
-      redactions: z.array(redactionSchema),
-      records_pointer: pointerSchema.nullable(),
-    }),
-    total_records: z.number().int().nonnegative(),
-    records: z.array(webNetworkCaptureRecordSchema),
-  })
-  .superRefine((capture, context) => {
-    if (capture.records.length > capture.total_records) {
+/** Source coverage is shared by every offline decoder. */
+const payloadShape = {
+  decoder: z.strictObject({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    version: z.string().min(1),
+  }),
+  container: z.strictObject({
+    reported: jsonValueSchema,
+    numeric_literals: z.array(numberSchema),
+    redactions: z.array(redactionSchema),
+    records_pointer: pointerSchema.nullable(),
+  }),
+  total_records: z.number().int().nonnegative(),
+  records: z.array(webNetworkCaptureRecordSchema),
+};
+const refineCoverage = (
+  capture: { total_records: number; records: { ordinal: number }[] },
+  context: z.RefinementCtx,
+): void => {
+  const seen = new Set<number>();
+  for (const [index, record] of capture.records.entries()) {
+    if (record.ordinal >= capture.total_records || seen.has(record.ordinal)) {
       context.addIssue({
         code: "custom",
-        path: ["records"],
-        message: "Retained record count exceeds the declared capture total.",
+        path: ["records", index, "ordinal"],
+        message:
+          "Retained ordinals must be unique and within the declared capture total.",
       });
       return;
     }
-    const seen = new Set<number>();
-    for (const [index, record] of capture.records.entries()) {
-      if (record.ordinal >= capture.total_records || seen.has(record.ordinal)) {
-        context.addIssue({
-          code: "custom",
-          path: ["records", index, "ordinal"],
-          message:
-            "Retained ordinals must be unique and within the declared capture total.",
-        });
-        return;
-      }
-      seen.add(record.ordinal);
-    }
-  });
-
-/** Historical capture inspection has file identity, producer provenance and explicit unknowns. */
-export const webNetworkCaptureSchema =
-  webNetworkCapturePayloadSchema.safeExtend({
-    artifact: z.strictObject({
-      path: z
-        .string()
-        .describe(
-          "Selected artifact path; empty when explicitly excluded from Evidence.",
-        ),
-      sha256: z
-        .string()
-        .regex(/^[0-9a-f]{64}$/)
-        .nullable()
-        .describe(
-          "Observed artifact SHA-256; null only when explicitly excluded by a sensitive declaration.",
-        ),
-      bytes: z.number().int().nonnegative(),
+    seen.add(record.ordinal);
+  }
+};
+/** Strict alternatives prevent undefined-valued facets from entering JSON Evidence. */
+export const webNetworkCapturePayloadSchema = z
+  .union([
+    z.strictObject({ ...payloadShape, qlog: qlogCaptureFactsSchema }),
+    z.strictObject(payloadShape),
+  ])
+  .superRefine(refineCoverage);
+const artifactShape = {
+  artifact: z.strictObject({
+    path: z
+      .string()
+      .describe(
+        "Selected artifact path; empty when explicitly excluded from Evidence.",
+      ),
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable()
+      .describe("Observed SHA-256; null only when explicitly excluded."),
+    bytes: z.number().int().nonnegative(),
+  }),
+  runtime_attribution: z.literal("unknown"),
+  limitations: z.array(z.string()),
+};
+/** Qlog transport facts occur exactly on the qlog alternative. */
+export const webNetworkCaptureSchema = z
+  .discriminatedUnion("format", [
+    z.strictObject({
+      ...payloadShape,
+      ...artifactShape,
+      format: z.enum(["har", "mitmproxy"]),
     }),
-    format: z.enum(["har", "mitmproxy"]),
-    runtime_attribution: z.literal("unknown"),
-    limitations: z.array(z.string()),
-  });
+    z.strictObject({
+      ...payloadShape,
+      ...artifactShape,
+      format: z.literal("qlog"),
+      qlog: qlogCaptureFactsSchema,
+    }),
+  ])
+  .superRefine(refineCoverage);
 
 export type InspectWebNetworkCaptureInput = z.output<
   typeof inspectWebNetworkCaptureInputSchema

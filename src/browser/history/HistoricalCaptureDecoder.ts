@@ -4,9 +4,9 @@ import {
   captureMemoryFailure,
 } from "./CaptureFailures.js";
 import {
-  HAR_CAPTURE_HEAP_ENFORCED,
-  HAR_CAPTURE_HEAP_LIMITS,
-  HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+  JSON_CAPTURE_HEAP_ENFORCED,
+  JSON_CAPTURE_HEAP_LIMITS,
+  JSON_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
 } from "./CaptureRelease.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
@@ -198,22 +198,36 @@ export class HistoricalCaptureDecoder {
           OPERATION,
           "Capture decoder changed the selected upstream profile identity.",
         );
-      result = ok({
-        ...reply.value,
+      const common = {
         artifact: {
           path: input.capture_path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
         },
-        format: input.format,
-        runtime_attribution: "unknown",
+
+        runtime_attribution: "unknown" as const,
         limitations: [
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          `A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. ${harMemoryLimitation()}; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.`,
+          `A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. ${jsonMemoryLimitation()}; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.`,
         ],
-      });
+      };
+      if (input.format === "qlog") {
+        if (!("qlog" in reply.value))
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Capture decoder omitted qlog transport facts.",
+          );
+        result = ok({ ...reply.value, ...common, format: "qlog" });
+      } else {
+        if ("qlog" in reply.value)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Capture decoder supplied inapplicable qlog transport facts.",
+          );
+        result = ok({ ...reply.value, ...common, format: input.format });
+      }
     } catch (cause: unknown) {
       result = err(
         redactExplicitFailure(
@@ -251,13 +265,13 @@ export class HistoricalCaptureDecoder {
   }
 }
 
-/** The HAR decoder runs on this executable; only Node.js enforces its V8 heap flags. */
-const harMemoryLimitation = (): string => {
-  if (HAR_CAPTURE_HEAP_ENFORCED)
-    return `HAR uses a ${String(HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB)} MiB Node old-generation heap`;
-  return HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
-    ? "HAR runs on Bun, which does not enforce REA's V8 heap flags"
-    : `HAR runs on Bun, which does not enforce REA's V8 heap flags, under a ${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)}-byte Windows Job Object commit limit`;
+/** JSON capture decoders run on this executable; only Node.js enforces V8 heap flags. */
+const jsonMemoryLimitation = (): string => {
+  if (JSON_CAPTURE_HEAP_ENFORCED)
+    return `HAR/qlog use a ${String(JSON_CAPTURE_HEAP_LIMITS.oldGenerationMiB)} MiB Node old-generation heap`;
+  return JSON_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
+    ? "HAR/qlog run on Bun, which does not enforce REA's V8 heap flags"
+    : `HAR/qlog run on Bun, which does not enforce REA's V8 heap flags, under a ${String(JSON_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)}-byte Windows Job Object commit limit`;
 };
 
 const replyFailureReason = (cause: unknown): string => {

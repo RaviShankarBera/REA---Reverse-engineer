@@ -16,10 +16,12 @@ export const registerWebNetworkCaptureCommands = (
   const service = createWebNetworkCaptureService(environment);
   cli.command(CLI_COMMANDS.inspectWebNetworkCapture, {
     description:
-      "Inspect retained HAR or native mitmproxy records without fetching recorded URLs",
+      "Inspect retained HAR, native mitmproxy or aioquic qlog records without fetching recorded URLs",
     args: z.object({
       capturePath: z.string().describe("Absolute local capture path"),
-      format: z.enum(["har", "mitmproxy"]).describe("Producer capture format"),
+      format: z
+        .enum(["har", "mitmproxy", "qlog"])
+        .describe("Producer capture format"),
     }),
     options: z.object({
       record: z
