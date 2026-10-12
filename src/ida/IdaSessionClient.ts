@@ -420,10 +420,25 @@ export class IdaSessionClient implements AnalysisClient {
     const expected =
       this.config.mode === "attached" ? legacyTools : modernTools;
     const missing = expected.filter((name) => !tools.has(name));
-    if (missing.length > 0)
-      throw new AnalysisProtocolError(
-        `IDA MCP ${this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`,
-      );
+    if (missing.length > 0) {
+      const summary = `IDA MCP ${this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      // The caller cannot act on a profile mismatch it never sees, so the
+      // missing names travel as adapter diagnostics rather than a bare message.
+      throw new ProviderAdapterError("ida", "initialize", {
+        userMessage: summary,
+        diagnostics: {
+          reason: summary,
+          mode: this.config.mode,
+          expected_profile:
+            this.config.mode === "attached"
+              ? "legacy-1.4"
+              : "database-supervisor",
+          missing_tools: [...missing],
+          recovery:
+            "Install an upstream ida-pro-mcp build that serves this profile; see docs/ida-provider.md.",
+        },
+      });
+    }
     if (this.config.mode === "headless") {
       this.#workspace = await IdaWorkspace.allocate(
         this.target,
