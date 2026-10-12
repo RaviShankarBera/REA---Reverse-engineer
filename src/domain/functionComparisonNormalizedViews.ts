@@ -48,12 +48,13 @@ const RULES = [
 
 const SHARED_LIMITATIONS = [
   "Normalized views compare provider text after declared address masking. Equal normalized views do not establish that both sides reference the same procedure, data, label, or layout; the exact pseudocode, assembly, calls, references, and CFG dimensions keep their own meanings and statuses.",
-  "Ordinal placeholders follow first appearance within each side, so a changed use order, count, mnemonic, constant, or named symbol stays visible in the normalized text.",
+  "Ordinal placeholders are assigned independently by first appearance on each side. A normalized unchanged status means only that masked text is equal; it does not prove stable target identity or call order.",
 ] as const;
 
 interface AddressProjection {
   /** Entry-relative offset, corroborated external address, or null when unmasked. */
   readonly maskAddress: (address: bigint) => string | null;
+  readonly isCalleeAddress: (address: bigint) => boolean;
 }
 
 /**
@@ -68,50 +69,63 @@ interface AddressProjection {
 const normalizeText = (
   text: string,
   projection: AddressProjection,
-): { readonly text: string; readonly counts: MaskingCounts } => {
+): {
+  readonly text: string;
+  readonly counts: MaskingCounts;
+  readonly maskedCalleeTarget: boolean;
+} | null => {
   const identifiers = new Map<string, string>();
   const addresses = new Map<string, string>();
   let maskedIdentifiers = 0;
   let unmaskedIdentifiers = 0;
   let maskedAddresses = 0;
   let visibleAddresses = 0;
-  const withIdentifiers = text.replace(
-    ADDRESS_DERIVED_IDENTIFIER,
-    (match, label: string, prefix: string | undefined) => {
-      const address = parseAddress(
-        `${prefix ?? "0x"}${match.slice(label.length + (prefix?.length ?? 0))}`.toLowerCase(),
-      );
+  let maskedCalleeTarget = false;
+  const normalized = transformCode(text, (code) => {
+    const withIdentifiers = code.replace(
+      ADDRESS_DERIVED_IDENTIFIER,
+      (match, label: string, prefix: string | undefined) => {
+        const address = parseAddress(
+          `${prefix ?? "0x"}${match.slice(label.length + (prefix?.length ?? 0))}`.toLowerCase(),
+        );
+        const replacement =
+          address === null ? null : projection.maskAddress(address);
+        if (replacement === null) {
+          unmaskedIdentifiers += 1;
+          return match;
+        }
+        if (address !== null && projection.isCalleeAddress(address))
+          maskedCalleeTarget = true;
+        maskedIdentifiers += 1;
+        const existing = identifiers.get(replacement);
+        if (existing !== undefined) return existing;
+        const placeholder = `${label}<sym:${identifiers.size + 1}>`;
+        identifiers.set(replacement, placeholder);
+        return placeholder;
+      },
+    );
+    return withIdentifiers.replace(HEXADECIMAL_ADDRESS, (match) => {
+      const address = parseAddress(match.toLowerCase());
       const replacement =
         address === null ? null : projection.maskAddress(address);
       if (replacement === null) {
-        unmaskedIdentifiers += 1;
+        visibleAddresses += 1;
         return match;
       }
-      maskedIdentifiers += 1;
-      const existing = identifiers.get(replacement);
+      if (address !== null && projection.isCalleeAddress(address))
+        maskedCalleeTarget = true;
+      maskedAddresses += 1;
+      const existing = addresses.get(replacement);
       if (existing !== undefined) return existing;
-      const placeholder = `${label}<sym:${identifiers.size + 1}>`;
-      identifiers.set(replacement, placeholder);
+      const placeholder = `<addr:${addresses.size + 1}>`;
+      addresses.set(replacement, placeholder);
       return placeholder;
-    },
-  );
-  const normalized = withIdentifiers.replace(HEXADECIMAL_ADDRESS, (match) => {
-    const address = parseAddress(match.toLowerCase());
-    const replacement =
-      address === null ? null : projection.maskAddress(address);
-    if (replacement === null) {
-      visibleAddresses += 1;
-      return match;
-    }
-    maskedAddresses += 1;
-    const existing = addresses.get(replacement);
-    if (existing !== undefined) return existing;
-    const placeholder = `<addr:${addresses.size + 1}>`;
-    addresses.set(replacement, placeholder);
-    return placeholder;
+    });
   });
+  if (normalized === null) return null;
   return {
     text: normalized,
+    maskedCalleeTarget,
     counts: {
       address_derived_identifiers: maskedIdentifiers,
       unmasked_address_derived_identifiers: unmaskedIdentifiers,
@@ -119,6 +133,63 @@ const normalizeText = (
       visible_addresses: visibleAddresses,
     },
   };
+};
+
+/** Normalize code tokens while preserving literals/comments byte-for-byte. */
+const transformCode = (
+  text: string,
+  transform: (code: string) => string,
+): string | null => {
+  let output = "";
+  let codeStart = 0;
+  let index = 0;
+  while (index < text.length) {
+    const current = text[index];
+    const next = text[index + 1];
+    if (current === '"' || current === "'") {
+      output += transform(text.slice(codeStart, index));
+      const quote = current;
+      const literalStart = index++;
+      let closed = false;
+      while (index < text.length) {
+        if (text[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (text[index] === quote) {
+          index += 1;
+          closed = true;
+          break;
+        }
+        if ((text[index] === "\n" || text[index] === "\r") && quote === "'")
+          return null;
+        index += 1;
+      }
+      if (!closed) return null;
+      output += text.slice(literalStart, index);
+      codeStart = index;
+      continue;
+    }
+    if (current === "/" && (next === "/" || next === "*")) {
+      output += transform(text.slice(codeStart, index));
+      const commentStart = index;
+      if (next === "/") {
+        index += 2;
+        while (index < text.length && text[index] !== "\n") index += 1;
+      } else {
+        index += 2;
+        const end = text.indexOf("*/", index);
+        if (end < 0) return null;
+        index = end + 2;
+      }
+      output += text.slice(commentStart, index);
+      codeStart = index;
+      continue;
+    }
+    index += 1;
+  }
+  output += transform(text.slice(codeStart));
+  return output;
 };
 
 interface BodyExtent {
@@ -200,8 +271,16 @@ const sideProjection = (
   relativeOffsets: boolean,
 ): AddressProjection => {
   const addresses = corroboratedAddresses(snapshot);
+  const calleeAddresses = new Set(
+    snapshot.dossier.callees.flatMap((callee) =>
+      [callee.address, callee.classification?.thunk_target]
+        .map((value) => parseAddress((value ?? "").toLowerCase()))
+        .filter((value): value is bigint => value !== null),
+    ),
+  );
   const extent = relativeOffsets ? bodyExtent(snapshot) : null;
   return {
+    isCalleeAddress: (address) => calleeAddresses.has(address),
     maskAddress: (address) => {
       if (extent !== null && contains(extent.ranges, address))
         return `+0x${(address - extent.base).toString(16)}`;
@@ -256,9 +335,13 @@ const unknownView = (
 export const normalizedViews = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
-  links: readonly string[],
-  providersDiffer: boolean,
+  options: {
+    readonly links: readonly string[];
+    readonly providersDiffer: boolean;
+    readonly callsStatus: "unchanged" | "changed" | "unknown";
+  },
 ): FunctionNormalizedViews => {
+  const { links, providersDiffer } = options;
   const shared = [...SHARED_LIMITATIONS];
   if (providersDiffer) {
     const limitation =
@@ -289,6 +372,11 @@ export const normalizedViews = (
         viewText(right, dimension),
         rightProjection,
       );
+      if (leftText === null || rightText === null)
+        return unknownView(dimension, links, [
+          ...limitations,
+          "Provider text contains an unterminated string, character literal, or block comment, so normalization was skipped.",
+        ]);
       const changes = diffLines(leftText.text, rightText.text, {
         timeout: 100,
         maxEditLength: 10_000,
@@ -308,6 +396,15 @@ export const normalizedViews = (
         }),
         { added_lines: 0, removed_lines: 0, hunks: 0 },
       );
+      if (
+        delta.hunks === 0 &&
+        options.callsStatus === "unknown" &&
+        (leftText.maskedCalleeTarget || rightText.maskedCalleeTarget)
+      )
+        return unknownView(dimension, links, [
+          ...limitations,
+          "Masked text references a dossier-listed callee while the exact calls dimension is unknown; normalized equality cannot establish callee identity or call order.",
+        ]);
       return {
         dimension,
         status: delta.hunks === 0 ? "unchanged" : "changed",

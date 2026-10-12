@@ -40,12 +40,13 @@ export const compareFunctions = (
     changes,
     ...(request.includeNormalizedViews === true
       ? {
-          normalized_views: normalizedViews(
-            left,
-            right,
+          normalized_views: normalizedViews(left, right, {
             links,
             providersDiffer,
-          ),
+            callsStatus:
+              dimensions.find(({ dimension }) => dimension === "calls")
+                ?.status ?? "unknown",
+          }),
         }
       : {}),
     limitations: [

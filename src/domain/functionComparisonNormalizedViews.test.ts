@@ -350,7 +350,113 @@ describe("normalized view edge cases", () => {
       status: "changed",
     });
   });
+});
 
+describe("normalized view lexical safety and callee identity", () => {
+  it.each([
+    ["quoted hexadecimal address", 'puts("0x411700")', 'puts("0x4116f0")'],
+    [
+      "quoted generated identifier",
+      'puts("FUN_00411700")',
+      'puts("FUN_004116f0")',
+    ],
+    [
+      "address in a line comment",
+      "return 0; // 0x411700",
+      "return 0; // 0x4116f0",
+    ],
+  ])("preserves %s text during normalization", (_name, from, to) => {
+    const [left, right] = syntheticPair(
+      {
+        ...relocatedText("0x411700"),
+        pseudocode: relocatedPseudocode("0x411700", from),
+      },
+      {
+        ...relocatedText("0x4116f0"),
+        pseudocode: relocatedPseudocode("0x4116f0", to),
+      },
+    );
+    const result = compareFunctions(left, right, {
+      includeNormalizedViews: true,
+    });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "changed",
+    });
+  });
+
+  it("reports equal ordinalized text as unknown when exact calls cannot establish callee identity", () => {
+    const left = syntheticDossier({
+      base: "0x411700",
+      name: "FUN_00411700",
+      pseudocode: "void FUN_00411700(void) { FUN_00411860(); }",
+      assembly: ["CALL 0x00411860"],
+      callees: [{ address: "0x411860", name: "FUN_00411860" }],
+    });
+    const right = syntheticDossier({
+      base: "0x511700",
+      name: "FUN_00511700",
+      pseudocode: "void FUN_00511700(void) { FUN_00511860(); }",
+      assembly: ["CALL 0x00511860"],
+      callees: [{ address: "0x511860", name: "FUN_00511860" }],
+    });
+    const [before, after] = syntheticPair(left, right);
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(dimension(result, "calls")).toMatchObject({ status: "unknown" });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringContaining(
+          "cannot establish callee identity or call order",
+        ),
+      ]),
+    });
+  });
+
+  it("does not treat independently numbered reordered callees as proven equal", () => {
+    const make = (base: string, first: string, second: string) =>
+      syntheticDossier({
+        base,
+        name: `FUN_${BigInt(base).toString(16)}`,
+        pseudocode: `void f(void) { FUN_${BigInt(first).toString(16)}(); FUN_${BigInt(second).toString(16)}(); }`,
+        assembly: [`CALL ${first}`, `CALL ${second}`],
+        callees: [
+          { address: first, name: `FUN_${BigInt(first).toString(16)}` },
+          { address: second, name: `FUN_${BigInt(second).toString(16)}` },
+        ],
+      });
+    const [before, after] = syntheticPair(
+      make("0x411700", "0x411860", "0x4118a0"),
+      make("0x511700", "0x5118a0", "0x511860"),
+    );
+    const result = compareFunctions(before, after, {
+      includeNormalizedViews: true,
+    });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+    });
+  });
+
+  it("fails closed when provider text has an unterminated literal", () => {
+    const [left, right] = syntheticPair(
+      { ...relocatedText("0x411700"), pseudocode: 'puts("0x411700)' },
+      relocatedText("0x4116f0"),
+    );
+    const result = compareFunctions(left, right, {
+      includeNormalizedViews: true,
+    });
+    expect(view(result, "pseudocode_normalized")).toMatchObject({
+      status: "unknown",
+      masking: null,
+      limitations: expect.arrayContaining([
+        expect.stringContaining("normalization was skipped"),
+      ]),
+    });
+  });
+});
+
+describe("normalized view edge cases", () => {
   it("leaves an unobserved function extent masked by ordinal and reports it", () => {
     const [left, right] = syntheticPair(
       relocatedText("0x411700", { body: false }),
