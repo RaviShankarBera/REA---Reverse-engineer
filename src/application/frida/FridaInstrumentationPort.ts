@@ -103,11 +103,16 @@ export interface FridaInstrumentationPort {
   loadScript(
     sessionId: string,
     source: FridaScriptSource,
+    signal?: AbortSignal,
   ): Promise<Result<FridaScriptObservation, AnalysisError>>;
-  resumeSession(sessionId: string): Promise<Result<null, AnalysisError>>;
+  resumeSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<Result<null, AnalysisError>>;
   unloadScript(
     sessionId: string,
     scriptId: string,
+    signal?: AbortSignal,
   ): Promise<Result<null, AnalysisError>>;
   status(sessionId: string): FridaSessionStatus | undefined;
   closeSession(
