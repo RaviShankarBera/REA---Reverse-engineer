@@ -47,6 +47,8 @@ std::vector<napi_value> array(napi_env env, napi_value value) {
   bool valid; check(napi_is_array(env, value, &valid));
   require(valid, "Native arguments must be an array", L"", ERROR_INVALID_PARAMETER);
   uint32_t length; check(napi_get_array_length(env, value, &length));
+  require(length <= 64, "Native argument list exceeds the fixed operation limit", L"",
+          ERROR_INVALID_PARAMETER);
   std::vector<napi_value> result(length);
   for (uint32_t index = 0; index < length; ++index)
     check(napi_get_element(env, value, index, &result[index]));
@@ -130,6 +132,7 @@ static napi_value call(napi_env env, napi_callback_info info) {
       require(values.empty(), "Inspect takes no arguments", L"", ERROR_INVALID_PARAMETER);
       return inspect(env, static_cast<InspectionContext*>(data)->probe);
     }
+    if (operation == L"capture_window_png") return windowCaptureCall(env, values);
     if (operation.rfind(L"process_", 0) == 0) return processCall(env, operation, values);
     return filesystemCall(env, operation, values);
   } catch (const Failure& failure) {

@@ -73,6 +73,17 @@ without this lane reports Windows native controls as unavailable.
   priority are preserved in the child. Environment names are sorted and
   deduplicated using Windows ordinal comparison, preserving their native Unicode
   semantics and caller-selected values.
+- The selected-window PNG operation admits one caller-supplied canonical HWND
+  only after its owner PID, process start time and executable path agree with
+  the active PE application target. It renders the client area through a
+  five-second `WM_PRINT` request into an in-memory DIB and WIC PNG encoder. It
+  never enumerates windows, captures a desktop or region, searches titles,
+  writes a caller-selected path, sends input, changes permissions, or falls
+  back to BitBlt. Protected, elevated, hung, minimized, GPU-composited, or
+  custom-drawn windows can therefore fail or yield incomplete pixels; that is
+  reported as a capture limitation rather than widened authority. WM_PRINT can
+  execute the selected target's paint handler, which can have ordinary target
+  UI, filesystem, or network effects even though REA sends no input.
 - Cleanup walks locked directory objects, removes files by handle, and unlinks
   reparse entries without traversing their targets. Failed removal retains the
   root and ancestor leases for retry; a partially removed runtime accepts only
