@@ -243,21 +243,18 @@ const openCodeOverrideDirectory = (
   return directory === undefined || directory === "" ? undefined : directory;
 };
 
+/** OpenCode's XDG loader treats an empty config root as unset. */
+const openCodeGlobalDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.XDG_CONFIG_HOME || join(home, ".config"), "opencode");
+
 const opencodeDirectory = (context: ClientPathContext): string =>
-  openCodeOverrideDirectory(context.env) ??
-  join(
-    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
-    "opencode",
-  );
+  openCodeOverrideDirectory(context.env) ?? openCodeGlobalDirectory(context);
 
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
-  const directory = join(
-    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
-    "opencode",
-  );
+  const directory = openCodeGlobalDirectory(context);
   const overrideDirectory = openCodeOverrideDirectory(context.env);
   const paths = [
     join(directory, "config.json"),

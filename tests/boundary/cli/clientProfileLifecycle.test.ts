@@ -80,8 +80,19 @@ const groups = [
     cases: [
       {
         client: "opencode",
-        env: { OPENCODE_CONFIG_DIR: "" },
+        env: { OPENCODE_CONFIG_DIR: "", XDG_CONFIG_HOME: "" },
         config: ".config/opencode/opencode.json",
+        skill: ".agents/skills",
+      },
+    ],
+  },
+  {
+    name: "OpenCode XDG profile",
+    cases: [
+      {
+        client: "opencode",
+        env: { XDG_CONFIG_HOME: "profile" },
+        config: "profile/opencode/opencode.json",
         skill: ".agents/skills",
       },
     ],
@@ -250,6 +261,10 @@ for (const group of groups) {
         status: "ready",
         appliedActions: [],
       });
+      if (profiles.some(({ client }) => client === "opencode"))
+        await expect(access(join(home, "opencode"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
       const uninstall = await run(["uninstall", "--json"]);
       expect(uninstall.exitCode).toBe(0);
       expect(uninstall.json).toMatchObject({ status: "complete" });

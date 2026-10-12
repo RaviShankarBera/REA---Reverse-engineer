@@ -325,7 +325,7 @@ cliTest(
 );
 
 cliTest(
-  "OpenCode retains the XDG global layer when a custom directory is selected",
+  "OpenCode retains the default global layer with empty XDG and a custom directory",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-opencode-global-custom-");
     const global = join(home, ".config/opencode/opencode.json");
@@ -354,6 +354,7 @@ cliTest(
         environment: {
           HOME: home,
           USERPROFILE: home,
+          XDG_CONFIG_HOME: "",
           OPENCODE_CONFIG_DIR: dirname(custom),
         },
       });
