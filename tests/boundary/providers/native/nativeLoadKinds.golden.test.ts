@@ -229,6 +229,62 @@ it("normalizes legacy version-minimum commands into build metadata", () => {
   ]);
 });
 
+it("names numeric build-version platforms and tools", () => {
+  const load = parseOtoolLoadCommands(
+    withOtoolMachHeader(
+      [
+        "Load command 0",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 48",
+        " platform 1",
+        "    minos 11.0",
+        "      sdk 26.5",
+        "   ntools 2",
+        "     tool 3",
+        "  version 1267.0",
+        "     tool 1029",
+        "  version 1.0",
+        "Load command 1",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 24",
+        " platform 99",
+        "    minos 1.0",
+        "      sdk 1.0",
+        "   ntools 0",
+        "Load command 2",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 32",
+        " platform MACCATALYST",
+        "    minos 14.0",
+        "      sdk 14.2",
+        "   ntools 1",
+        "     tool SWIFT",
+        "  version 5.9",
+        "",
+      ].join("\n"),
+    ),
+  );
+  expect(load.builds).toEqual([
+    {
+      platform: "MACOS",
+      minimum_os: "11.0",
+      sdk: "26.5",
+      tools: [
+        { name: "LD", version: "1267.0" },
+        { name: "1029", version: "1.0" },
+      ],
+    },
+    { platform: "99", minimum_os: "1.0", sdk: "1.0", tools: [] },
+    {
+      platform: "MACCATALYST",
+      minimum_os: "14.0",
+      sdk: "14.2",
+      tools: [{ name: "SWIFT", version: "5.9" }],
+    },
+  ]);
+  expect(load.commands[0]?.fields.platform).toBe(1);
+});
+
 it("does not classify LC_LOAD_DYLINKER as a dylib dependency", async () => {
   const load = parseOtoolLoadCommands(
     await nativeFixture("native-macho-header/otool-header-load.txt"),
