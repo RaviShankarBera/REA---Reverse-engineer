@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+import {
+  DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
+  providerStartupTimeoutSchema,
+} from "../config/providerStartupTimeout.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
 import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
@@ -73,8 +77,25 @@ const sourceFiles = [
  */
 export const SWIFTC_INTERRUPT = "SIGINT";
 
-/** Deadline for the one-shot helper compilation. */
-const COMPILER_TIMEOUT_MS = 60_000;
+/**
+ * Resolve the Darwin ownership-helper compile deadline from an explicit option
+ * or `REA_SWIFTC_COMPILE_TIMEOUT_MS`, keeping the historical 60s default.
+ * Invalid ambient values fall back to the default; `parseConfig` still rejects
+ * them at CLI/MCP admission.
+ */
+export const resolveSwiftcCompileTimeoutMs = (
+  options: {
+    readonly compileTimeoutMs?: number;
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+  } = {},
+): number => {
+  if (options.compileTimeoutMs !== undefined) return options.compileTimeoutMs;
+  const raw = (options.environment ?? process.env)
+    .REA_SWIFTC_COMPILE_TIMEOUT_MS;
+  if (raw === undefined) return DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS;
+  const parsed = providerStartupTimeoutSchema.safeParse(raw);
+  return parsed.success ? parsed.data : DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS;
+};
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
 const STDERR_EXCERPT_LIMIT = 512;
@@ -241,9 +262,11 @@ export const createDarwinProcessRunTokenReader = (
     readonly xcrun?: string;
     /** Deadline for the helper compilation; the default keeps verification fast. */
     readonly compileTimeoutMs?: number;
+    /** Environment consulted when `compileTimeoutMs` is omitted. */
+    readonly environment?: Readonly<Record<string, string | undefined>>;
   } = {},
 ) => {
-  const compilerTimeoutMs = options.compileTimeoutMs ?? COMPILER_TIMEOUT_MS;
+  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs(options);
   let root: string | undefined;
   let executable: string | undefined;
   let compilation: ProcessReaderCompilation | undefined;

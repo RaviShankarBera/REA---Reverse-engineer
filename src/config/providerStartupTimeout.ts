@@ -6,6 +6,9 @@ export const DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS = 330_000;
 /** Default absolute deadline for Hopper launch, analysis, bridge, and readiness. */
 export const DEFAULT_HOPPER_STARTUP_TIMEOUT_MS = 120_000;
 
+/** Default deadline for Darwin ownership-helper `swiftc` compilation. */
+export const DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS = 60_000;
+
 // Node schedules delays above this signed 32-bit boundary as a 1 ms timer.
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 

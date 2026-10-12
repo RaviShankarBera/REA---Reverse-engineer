@@ -220,15 +220,20 @@ export const createSystemProcessOwnershipHost = (
   options: {
     /** Override the compiler executable used by the Darwin native reader. */
     readonly darwinXcrun?: string;
+    /** Deadline for Darwin ownership-helper compilation. */
+    readonly compileTimeoutMs?: number;
   } = {},
 ): ProcessOwnershipHost => {
   const darwinTokens =
     platform === "darwin"
-      ? createDarwinProcessRunTokenReader(
-          options.darwinXcrun === undefined
+      ? createDarwinProcessRunTokenReader({
+          ...(options.darwinXcrun === undefined
             ? {}
-            : { xcrun: options.darwinXcrun },
-        )
+            : { xcrun: options.darwinXcrun }),
+          ...(options.compileTimeoutMs === undefined
+            ? { environment: hostEnvironment }
+            : { compileTimeoutMs: options.compileTimeoutMs }),
+        })
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
