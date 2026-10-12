@@ -424,7 +424,9 @@ const resolveDependency = async (
 ): Promise<Edge> => {
   const current = context.loaded.get(loader);
   const chain = current?.chain ?? [loader];
-  const loaded = context.byInstallName.get(dependency.install_name);
+  const loaded = dependency.install_name.startsWith("@rpath/")
+    ? context.byInstallName.get(dependency.install_name)
+    : undefined;
   const candidates: Candidate[] = [];
   if (loaded !== undefined)
     candidates.push({
@@ -503,7 +505,10 @@ const traceProcess = async (
     chain: [context.root],
     conditional: false,
   });
-  if (rootSlice.install_name !== null)
+  if (
+    rootSlice.install_name !== null &&
+    rootSlice.install_name.startsWith("@rpath/")
+  )
     context.byInstallName.set(rootSlice.install_name, context.root);
   const pending = [context.root];
   while (pending.length > 0) {
@@ -534,6 +539,7 @@ const traceProcess = async (
       });
       if (
         slice.install_name !== null &&
+        slice.install_name.startsWith("@rpath/") &&
         !context.byInstallName.has(slice.install_name)
       )
         context.byInstallName.set(slice.install_name, image);
