@@ -398,7 +398,13 @@ const selectArchitecture = (
   target: BinaryTarget,
   available: readonly string[],
 ): ArchitectureSelection => {
-  if (target.kind !== "executable" || target.availableArchitectures.length < 2)
+  // BinaryTarget lists CPU families and lipo lists slices. A universal file
+  // can hold several slices of one family (arm64e and arm64e.x1), and slice
+  // tools without -arch print every slice.
+  if (
+    target.kind !== "executable" ||
+    (target.availableArchitectures.length < 2 && available.length < 2)
+  )
     return { status: "unfiltered" };
   const normalized =
     target.architecture === "x86" ? "i386" : target.architecture;

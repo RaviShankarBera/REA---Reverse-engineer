@@ -2,6 +2,7 @@ import type { FixupCommands } from "./AppleMachoFixups.js";
 import {
   readFatSliceDeclarations,
   validateFatSlice,
+  type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 
 /** One mapped Mach-O segment with file-backed VA range. */
@@ -98,24 +99,34 @@ export const selectMachoSlice = (
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
-  let selected: MachoSlice | undefined;
+  let best: FatSliceDeclaration | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
   for (const declaration of declarations.slices) {
     const issue = validateFatSlice(declaration, bytes.length, headerEnd);
     if (issue !== null) throw malformed(issue);
     if (declaration.cpuType !== cpu) continue;
-    if (selected !== undefined)
-      throw invalid("Ambiguous FAT architecture slice");
-    selected = {
-      slice: declaration.offset,
-      sliceEnd: declaration.offset + declaration.size,
-      fatDeclaration: {
-        ...declaration,
-        tableEnd: headerEnd,
-      },
-    };
+    const rank = subtypeRank(cpu, declaration.cpuSubtype);
+    if (best !== undefined && rank >= bestRank) {
+      // Equal ranks keep FAT table order unless the slices share a subtype.
+      if (
+        rank === bestRank &&
+        baseSubtype(declaration.cpuSubtype) === baseSubtype(best.cpuSubtype)
+      )
+        ambiguous = true;
+      continue;
+    }
+    best = declaration;
+    bestRank = rank;
+    ambiguous = false;
   }
-  if (selected === undefined)
-    throw invalid("Requested FAT architecture is absent");
+  if (best === undefined) throw invalid("Requested FAT architecture is absent");
+  if (ambiguous) throw invalid("Ambiguous FAT architecture slice");
+  const selected: MachoSlice = {
+    slice: best.offset,
+    sliceEnd: best.offset + best.size,
+    fatDeclaration: { ...best, tableEnd: headerEnd },
+  };
   if (selected.slice + 4 > bytes.length)
     throw malformed("Truncated Mach-O header");
   const sliceMagic = bytes.readUInt32LE(selected.slice);
@@ -132,6 +143,25 @@ const MACHO_CPU_TYPE: Readonly<Record<string, number>> = {
   x86_64: 0x01000007,
   arm: 12,
   arm64: 0x0100000c,
+};
+/** High subtype bits carry capabilities, such as the arm64e PAC ABI version. */
+const CPU_SUBTYPE_CAPABILITY_MASK = 0xff000000;
+/**
+ * Base subtypes in selection order for slices of one CPU type. Like the lipo
+ * name preference in `NativeMachoInspection`, the plain family slice comes
+ * first, then arm64e; other variants (arm64e.x1 is 12, x86_64h is 8) follow in
+ * FAT table order.
+ */
+const PREFERRED_CPU_SUBTYPES: Readonly<Record<number, readonly number[]>> = {
+  0x0100000c: [0, 1, 2],
+  0x01000007: [3],
+};
+const baseSubtype = (cpuSubtype: number): number =>
+  cpuSubtype & ~CPU_SUBTYPE_CAPABILITY_MASK;
+const subtypeRank = (cpuType: number, cpuSubtype: number): number => {
+  const preferred = PREFERRED_CPU_SUBTYPES[cpuType] ?? [];
+  const rank = preferred.indexOf(baseSubtype(cpuSubtype));
+  return rank < 0 ? preferred.length : rank;
 };
 const MH_MAGIC = 0xfeedface;
 const MH_CIGAM = 0xcefaedfe;
