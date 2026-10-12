@@ -16,6 +16,7 @@ import {
   isProcessEvidenceProvider,
 } from "./process/processEvidenceProvider.js";
 import { functionDossierSchema } from "./hopperValues.js";
+import { functionCallLimitations } from "./functionDossierEvidence.js";
 import {
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
@@ -139,7 +140,7 @@ const evaluateClaim = (
   });
   validateSourceKinds(claim, sources);
   const observed = observedStatus(claim, comparison);
-  const limitations = authorityLimitations(claim, sources, sides);
+  const limitations = authorityLimitations(claim, sources, sides, observed);
   const relevantUnknowns = reconstructionClaimUnknowns(
     heads,
     comparison.evidence_id,
@@ -276,6 +277,7 @@ const authorityLimitations = (
     readonly left: readonly string[];
     readonly right: readonly string[];
   },
+  observed: ObservedStatus,
 ): string[] => {
   const requiredAuthority =
     claim.kind === "behavioral" ? "controlled-replay" : "shipped-artifact";
@@ -314,6 +316,18 @@ const authorityLimitations = (
         "Controlled replay environments are unavailable or incompatible.",
       );
   }
+  if (
+    claim.kind === "structural-function" &&
+    (claim.dimension === "calls" ||
+      (claim.dimension === "overall" && observed !== "changed"))
+  )
+    for (const source of sources)
+      limitations.push(
+        ...functionCallLimitations({
+          evidence: source,
+          dossier: functionDossierSchema.parse(source.normalized_result),
+        }).map((reason) => `Source ${source.evidence_id}: ${reason}`),
+      );
   return limitations;
 };
 

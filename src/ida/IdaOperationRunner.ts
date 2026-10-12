@@ -511,7 +511,37 @@ export class IdaOperationRunner {
     const asm = await this.assembly(fn);
     const pseudocode = await this.pseudocode(fn);
     const callers = await this.relationships(fn, "callers");
+    const callerCoverage = this.relationshipCoverage;
+    this.relationshipCoverage = undefined;
     const callees = await this.relationships(fn, "callees");
+    const coverages = [callerCoverage, this.relationshipCoverage];
+    const reasons = coverages.flatMap((coverage, index) => {
+      const direction = index === 0 ? "Callers" : "Callees";
+      const details =
+        coverage === undefined
+          ? ["Provider did not report relationship coverage."]
+          : coverage.status === "unknown"
+            ? [coverage.reason]
+            : coverage.status === "partial"
+              ? coverage.limitations
+              : [];
+      return details.map((reason) => `${direction}: ${reason}`);
+    });
+    const diagnostics = coverages.flatMap((coverage) =>
+      coverage !== undefined && "diagnostics" in coverage
+        ? coverage.diagnostics
+        : [],
+    );
+    this.relationshipCoverage = {
+      ...(coverages.some(
+        (coverage) => coverage === undefined || coverage.status === "unknown",
+      )
+        ? { status: "unknown" as const, reason: reasons.join(" ") }
+        : reasons.length > 0
+          ? { status: "partial" as const, limitations: reasons }
+          : { status: "complete" as const }),
+      ...(diagnostics.length > 0 ? { diagnostics } : {}),
+    };
     const signature =
       asm.return_type == null || asm.arguments == null
         ? null

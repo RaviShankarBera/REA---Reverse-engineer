@@ -53,6 +53,7 @@ const source = (
   digit: string,
   observation: Partial<EvidenceObservation> = {},
   hasSubject = true,
+  hasCoverage = true,
 ): Evidence =>
   createEvidence(
     hasSubject
@@ -69,6 +70,9 @@ const source = (
       result: dossier,
       confidence: "derived",
       authority: "shipped-artifact",
+      ...(hasCoverage
+        ? { relationshipCoverage: { status: "complete" as const } }
+        : {}),
       ...observation,
     },
   );
@@ -344,6 +348,104 @@ describe("function reconstruction malformed source IDs", () => {
       /repeats a source within one side/u,
     );
   });
+});
+
+describe("function reconstruction call coverage", () => {
+  it("preserves an already observed overall counterexample alongside unknown calls", () => {
+    const incomplete = source("1", {}, true, false);
+    const changed = source("2", {
+      result: { ...jsonObjectSchema.parse(dossier), assembly: ["ret"] },
+    });
+    const changedResult = compareFunctions(left, changed);
+    const evidence = comparison(
+      {
+        left_evidence_id: incomplete.evidence_id,
+        right_evidence_id: changed.evidence_id,
+      },
+      {
+        result: jsonValueSchema.parse({
+          ...changedResult,
+          dimensions: changedResult.dimensions.map((dimension) => ({
+            ...dimension,
+            evidence_links: [incomplete.evidence_id, changed.evidence_id],
+          })),
+        }),
+      },
+      [incomplete, changed],
+    );
+    expect(
+      admittedVerification(evidence, [incomplete, changed], "overall")().status,
+    ).toBe("fail");
+  });
+
+  it.each([
+    {
+      label: "missing coverage",
+      observation: {},
+    },
+    {
+      label: "unknown coverage",
+      observation: {
+        relationshipCoverage: {
+          status: "unknown" as const,
+          reason: "Call graph unavailable.",
+        },
+      },
+    },
+    {
+      label: "partial coverage",
+      observation: {
+        relationshipCoverage: {
+          status: "partial" as const,
+          limitations: ["Additional edges omitted."],
+        },
+      },
+    },
+    {
+      label: "unresolved calls",
+      observation: {
+        result: {
+          ...jsonObjectSchema.parse(dossier),
+          unresolved_calls: [
+            { address: "0x1004", reason: "Computed target unresolved." },
+          ],
+        },
+      },
+    },
+  ])(
+    "blocks calls and overall claims from older unchanged comparison with $label",
+    ({ label, observation }) => {
+      const incomplete = source(
+        "1",
+        observation,
+        true,
+        label !== "missing coverage",
+      );
+      const sources = [incomplete, right];
+      const evidence = comparison(
+        {
+          left_evidence_id: incomplete.evidence_id,
+          right_evidence_id: right.evidence_id,
+        },
+        {},
+        sources,
+      );
+      for (const dimension of ["calls", "overall"]) {
+        const result = admittedVerification(evidence, sources, dimension)();
+        expect(result.status).toBe("unknown");
+        expect(result.claims.items).toMatchObject([
+          {
+            status: "unknown",
+            observed_status: "unchanged",
+            limitations: expect.arrayContaining([
+              expect.stringContaining(`Source ${incomplete.evidence_id}:`),
+            ]),
+          },
+        ]);
+      }
+      expect(verify(evidence, sources).status).toBe("pass");
+    },
+  );
 });
 
 describe("function reconstruction admission controls", () => {

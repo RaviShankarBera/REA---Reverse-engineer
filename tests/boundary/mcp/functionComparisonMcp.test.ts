@@ -1,12 +1,148 @@
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+
+describe("function call coverage MCP integration", () => {
+  it.each([
+    { label: "missing coverage", coverage: undefined, unresolvedCalls: [] },
+    {
+      label: "unknown coverage",
+      coverage: {
+        status: "unknown" as const,
+        reason: "Call graph unavailable.",
+      },
+      unresolvedCalls: [],
+    },
+    {
+      label: "partial coverage",
+      coverage: {
+        status: "partial" as const,
+        limitations: ["Additional edges omitted."],
+      },
+      unresolvedCalls: [],
+    },
+    {
+      label: "unresolved calls",
+      coverage: { status: "complete" as const },
+      unresolvedCalls: [
+        { address: "0x1004", reason: "Computed target unresolved." },
+      ],
+    },
+  ])(
+    "retains $label through public comparison and calls verification",
+    async ({ coverage, unresolvedCalls }) => {
+      const session = createTestBinarySession(() => {
+        throw new Error("Evidence comparison must not launch a provider");
+      });
+      const server = createServer({ kind: "session", session });
+      const client = new Client({
+        name: "function-call-coverage",
+        version: "1",
+      });
+      onTestFinished(async () => {
+        await Promise.allSettled([
+          client.close(),
+          server.close(),
+          session.close(),
+        ]);
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const left = FUNCTION_COMPARISON_EXAMPLE.left;
+      const right = createEvidence(
+        {
+          path: "/tmp/function-call-coverage",
+          sha256: "2".repeat(64),
+          format: "mach-o",
+        },
+        left.provider,
+        {
+          operation: left.operation,
+          parameters: left.parameters,
+          result: {
+            ...jsonObjectSchema.parse(left.normalized_result),
+            unresolved_calls: unresolvedCalls,
+          },
+          confidence: left.confidence,
+          authority: left.authority,
+          ...(coverage === undefined ? {} : { relationshipCoverage: coverage }),
+        },
+      );
+      const compared = await client.callTool({
+        name: "compare_functions",
+        arguments: { left, right },
+      });
+      expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
+      const comparison = parseEvidence(compared.structuredContent);
+      expect(comparison.normalized_result).toMatchObject({
+        status: "unknown",
+        changes: [
+          expect.objectContaining({
+            dimension: "calls",
+            status: "unknown",
+            limitations: [expect.any(String)],
+          }),
+        ],
+      });
+      expect(session.evidenceById(right.evidence_id)).toEqual(right);
+      expect(
+        session.listUnknowns({ domain: "function-comparison" }),
+      ).toMatchObject([
+        {
+          status: "open",
+          supporting_evidence_ids: expect.arrayContaining([
+            left.evidence_id,
+            right.evidence_id,
+          ]),
+        },
+      ]);
+      const verified = await client.callTool({
+        name: "verify_reconstruction",
+        arguments: {
+          specification: {
+            name: "Function calls",
+            claims: [
+              {
+                kind: "structural-function",
+                claim_id: "calls",
+                title: "Calls agree",
+                comparison_evidence_id: comparison.evidence_id,
+                dimension: "calls",
+              },
+            ],
+          },
+        },
+      });
+      expect(verified.isError, JSON.stringify(verified)).not.toBe(true);
+      expect(
+        parseEvidence(verified.structuredContent).normalized_result,
+      ).toMatchObject({
+        status: "unknown",
+        summary: { passed: 0, unknown: 1 },
+        claims: {
+          items: [
+            expect.objectContaining({
+              status: "unknown",
+              observed_status: "unknown",
+              limitations: expect.arrayContaining([
+                expect.stringContaining(`Source ${right.evidence_id}:`),
+              ]),
+            }),
+          ],
+        },
+      });
+    },
+  );
+});
 
 describe("function comparison reconstruction MCP integration", () => {
   it.each([
@@ -37,6 +173,9 @@ describe("function comparison reconstruction MCP integration", () => {
                 result: left.normalized_result,
                 confidence: left.confidence,
                 authority: left.authority,
+                ...(left.relationship_coverage === null
+                  ? {}
+                  : { relationshipCoverage: left.relationship_coverage }),
               },
             );
       const server = createServer({ kind: "session", session });

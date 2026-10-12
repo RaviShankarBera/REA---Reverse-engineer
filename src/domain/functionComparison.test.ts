@@ -3,12 +3,17 @@ import { describe, expect, it } from "vitest";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceObservation,
+} from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import type { RelationshipCoverage } from "./relationshipCoverage.js";
 
 import { compareFunctions } from "./functionComparison.js";
 const procedure = (address: string, name: string) => ({
@@ -96,6 +101,8 @@ const observe = (
   digit: string,
   value: ReturnType<typeof dossier>,
   providerId = "rea-workflow",
+  observation: Partial<EvidenceObservation> = {},
+  coverage: RelationshipCoverage | null = { status: "complete" },
 ): Evidence =>
   createEvidence(
     {
@@ -112,6 +119,8 @@ const observe = (
       result: jsonValueSchema.parse(value),
       confidence: "derived",
       authority: "shipped-artifact",
+      ...(coverage === null ? {} : { relationshipCoverage: coverage }),
+      ...observation,
     },
   );
 
@@ -342,6 +351,7 @@ describe("function comparison ordering controls", () => {
           result: jsonValueSchema.parse(result),
           confidence: "derived",
           authority: "shipped-artifact",
+          relationshipCoverage: { status: "complete" },
         },
       );
     const left = controlled("0x1000", false);
@@ -423,6 +433,113 @@ describe("function comparison unresolved text", () => {
         status: "truncated",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("function comparison call coverage", () => {
+  it.each([
+    { label: "missing", coverage: undefined, reason: "did not report" },
+    {
+      label: "unknown",
+      coverage: {
+        status: "unknown" as const,
+        reason: "Call graph unavailable.",
+      },
+      reason: "Call graph unavailable.",
+    },
+    {
+      label: "partial",
+      coverage: {
+        status: "partial" as const,
+        limitations: ["Additional callees were omitted."],
+        diagnostics: ["Provider reached its edge cap."],
+      },
+      reason: "Additional callees were omitted.",
+    },
+  ])(
+    "keeps equal empty calls unknown for $label coverage on either side",
+    ({ coverage, reason }) => {
+      const complete = observe("b", dossier("return 0;", "0x1000"));
+      const incomplete = observe(
+        "c",
+        dossier("return 0;", "0x2000"),
+        "rea-workflow",
+        {},
+        coverage ?? null,
+      );
+      for (const [left, right] of [
+        [complete, incomplete],
+        [incomplete, complete],
+      ]) {
+        const result = compareFunctions(left, right);
+        expect(result.status).toBe("unknown");
+        expect(result.summary).toEqual({
+          unchanged: 7,
+          changed: 0,
+          unknown: 1,
+        });
+        expect(result.changes).toMatchObject([
+          {
+            dimension: "calls",
+            status: "unknown",
+            conclusion_kind: "unresolved_branch",
+            left_count: 0,
+            right_count: 0,
+            limitations: expect.arrayContaining([
+              expect.stringContaining(reason),
+            ]),
+          },
+        ]);
+      }
+    },
+  );
+
+  it("retains unresolved call sites even with complete resolved relationships", () => {
+    const unresolved = functionDossierSchema.parse({
+      ...dossier("return helper();", "0x1000"),
+      callees: [procedure("0x1100", "helper")],
+      unresolved_calls: [
+        { address: "0x1004", reason: "Computed target is unresolved." },
+      ],
+    });
+    const result = compareFunctions(
+      observe("b", unresolved),
+      observe("c", unresolved),
+    );
+    expect(
+      result.dimensions.find(({ dimension }) => dimension === "calls"),
+    ).toMatchObject({
+      status: "unknown",
+      left_count: 1,
+      right_count: 1,
+      limitations: [
+        "Left: Unresolved call at 0x1004: Computed target is unresolved.",
+        "Right: Unresolved call at 0x1004: Computed target is unresolved.",
+      ],
+    });
+  });
+
+  it("compares complete sets without inferring incompleteness from execution caveats", () => {
+    const observation = {
+      relationshipCoverage: {
+        status: "complete" as const,
+        diagnostics: ["Static calls only."],
+      },
+      limitations: ["Runtime dispatch was not observed."],
+    };
+    const result = compareFunctions(
+      observe("b", dossier("return 0;", "0x1000"), "rea-workflow", observation),
+      observe(
+        "c",
+        { ...dossier("return 0;", "0x2000"), unresolved_calls: [] },
+        "rea-workflow",
+        observation,
+      ),
+    );
+    expect(result.status).toBe("unchanged");
+    expect(result.limitations).toContain(
+      "Left: Runtime dispatch was not observed.",
+    );
   });
 });
 

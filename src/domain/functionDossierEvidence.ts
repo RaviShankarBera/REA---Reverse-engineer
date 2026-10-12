@@ -10,6 +10,27 @@ export interface FunctionSnapshot {
   readonly limitations: readonly string[];
 }
 
+/** Reasons the recorded relationships cannot establish an equal call set. */
+export const functionCallLimitations = (
+  snapshot: Pick<FunctionSnapshot, "evidence" | "dossier">,
+): string[] => {
+  const coverage = snapshot.evidence.relationship_coverage;
+  const diagnostics =
+    coverage !== null && "diagnostics" in coverage ? coverage.diagnostics : [];
+  return [
+    ...(coverage === null
+      ? ["Provider did not report relationship coverage."]
+      : coverage.status === "unknown"
+        ? [coverage.reason, ...diagnostics]
+        : coverage.status === "partial"
+          ? [...coverage.limitations, ...diagnostics]
+          : []),
+    ...(snapshot.dossier.unresolved_calls ?? []).map(
+      ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
+    ),
+  ];
+};
+
 /** Parse one complete analyze_function Evidence record for comparison workflows. */
 export const parseFunctionEvidence = (input: unknown): FunctionSnapshot => {
   const evidence = parseEvidence(input);
