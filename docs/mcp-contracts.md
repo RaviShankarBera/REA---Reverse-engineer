@@ -346,6 +346,19 @@ directly to `compare_functions`, and `inspect_artifact` Evidence to
 `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+`compare_functions` returns eight exact dimensions whose statuses, summary
+counts, and overall status never change. `include_normalized_views` adds separate
+`pseudocode_normalized` and `assembly_normalized` views for builds that only
+shift addresses. Each view reports the masking policy it applied, the per-side
+counts of masked identifiers, masked addresses, and addresses left visible, its
+declared limitations, and both source Evidence references. Masking replaces
+recognized provider address-derived identifiers and dossier-corroborated
+addresses with ordinal placeholders and entry-relative offsets; constants,
+mnemonics, literals, named symbols, and uncorroborated labels stay visible. An
+equal normalized view therefore does not establish that both sides reference the
+same procedure, data, or label; read the exact dimensions and the declared
+limitations before reporting a behavior change.
+
 `get_call_graph` returns a `graph` keyed by traversal depth and a top-level
 `limitations` array with deduplicated execution caveats. Each node keeps its
 relationship coverage and read-specific `limitations`, alongside observed

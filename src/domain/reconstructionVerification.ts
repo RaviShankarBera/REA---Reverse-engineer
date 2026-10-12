@@ -10,7 +10,10 @@ import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { parseEvidenceBundle } from "./evidenceBundle.js";
-import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
+import {
+  functionComparisonResultSchema,
+  isNormalizedViewDimension,
+} from "./functionComparisonSchemas.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
@@ -230,20 +233,23 @@ const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
       evidence.normalized_result,
     );
     if (claim.dimension === "overall") return result.status;
-    const dimension = result.dimensions.find(
-      (item) => item.dimension === claim.dimension,
-    );
-    if (dimension === undefined)
-      throw new TypeError("Function comparison dimension missing");
-    if (
-      dimension.evidence_links.some(
-        (id) => !evidence.evidence_links.includes(id),
-      )
-    )
+    const normalized = isNormalizedViewDimension(claim.dimension);
+    const view = normalized
+      ? result.normalized_views?.views.find(
+          (item) => item.dimension === claim.dimension,
+        )
+      : result.dimensions.find((item) => item.dimension === claim.dimension);
+    if (view === undefined)
+      throw new TypeError(
+        normalized
+          ? "Function comparison normalized view was not requested"
+          : "Function comparison dimension missing",
+      );
+    if (view.evidence_links.some((id) => !evidence.evidence_links.includes(id)))
       throw new TypeError(
         "Function dimension cites Evidence outside comparison closure",
       );
-    return dimension.status;
+    return view.status;
   }
   const result = artifactComparisonResultSchema.parse(
     evidence.normalized_result,
