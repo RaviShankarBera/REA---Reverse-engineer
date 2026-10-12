@@ -20,6 +20,7 @@ export interface AppConfig {
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperStartupTimeoutMs: number;
+  readonly swiftcCompileTimeoutMs: number;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];

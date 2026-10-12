@@ -11,6 +11,7 @@ describe("runtime configuration", () => {
       expect(empty.value.hopperTargetPath).toBeUndefined();
       expect(empty.value.analysisProvider).toBe("auto");
       expect(empty.value.hopperStartupTimeoutMs).toBe(120_000);
+      expect(empty.value.swiftcCompileTimeoutMs).toBe(60_000);
     }
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
@@ -229,6 +230,41 @@ describe("configuration failure diagnostics", () => {
           settings: [
             {
               setting: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+              constraint: expect.any(String),
+            },
+          ],
+        },
+      });
+    },
+  );
+
+  it.each(["1", "90000", "2147483647"])(
+    "accepts Swift compile deadline %s without changing Hopper's deadline",
+    (value) => {
+      expect(
+        parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: {
+          swiftcCompileTimeoutMs: Number(value),
+          hopperStartupTimeoutMs: 120_000,
+        },
+      });
+    },
+  );
+
+  it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
+    "rejects malformed Swift compile deadline %j with its setting",
+    (value) => {
+      const result = parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value });
+      if (result.ok) throw new Error("Expected invalid Swift compile deadline");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "configuration_invalid",
+        category: "invalid_input",
+        details: {
+          settings: [
+            {
+              setting: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
               constraint: expect.any(String),
             },
           ],
